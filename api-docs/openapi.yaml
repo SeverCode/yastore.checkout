@@ -1,0 +1,916 @@
+  openapi: 3.0.3
+  info:
+    title: YaStore Checkout API
+    description: |
+      API для интеграции с внешним чекаутом Яндекс KIT.
+      
+      Все запросы требуют авторизации через Bearer токен, который настраивается в админ-панели модуля.
+      
+      ## Авторизация
+      
+      Все запросы должны содержать заголовок:
+      ```
+      Authorization: Bearer YOUR_TOKEN
+      ```
+      
+      Токен настраивается в админ-панели: **Настройки → Настройки модулей → YaStore Checkout → Токен API**
+    version: 0.0.14
+    contact:
+      name: Яндекс
+      url: https://yandex.ru
+
+  servers:
+    - url: https://yk-checkout.dev5.severcode.ru/yastore.checkout
+      description: Тестовый сервер
+
+  tags:
+    - name: warehouses
+      description: Управление складами
+    - name: basket
+      description: Проверка корзины и наличия товаров
+    - name: orders
+      description: Управление заказами
+    - name: settings
+      description: Настройки системы
+
+  paths:
+    /?method=warehouses:
+      get:
+        tags:
+          - warehouses
+        summary: Получить список складов
+        description: |
+          Возвращает список активных складов в системе.
+          
+          Если складской учёт выключен, возвращается только первый склад.
+          Если складов нет, возвращается виртуальный склад.
+        operationId: getWarehouses
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: Список складов
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    warehouses:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Warehouse'
+                examples:
+                  success:
+                    value:
+                      warehouses:
+                        - id: "1"
+                          title: "Основной склад"
+                          xml_id: "warehouse_1"
+                          active: "Y"
+                          address: "г. Москва, ул. Примерная, д. 1"
+                          phone: "+7 (495) 123-45-67"
+                          schedule: "Пн.-Пт. с 9:00 до 20:00"
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=checkBasket:
+      post:
+        tags:
+          - basket
+        summary: Проверить корзину и наличие товаров
+        description: |
+          Проверяет наличие товаров на складах и возвращает актуальные цены.
+          
+          Для каждого товара возвращается:
+          - Актуальные цены (regular_price, final_price)
+          - Наличие на складах (available_quantity)
+          - Изображение товара (если есть)
+          - URL товара (если есть)
+          - Габариты и вес (если указаны)
+        operationId: checkBasket
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    description: Список товаров для проверки
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - quantity
+                      properties:
+                        id:
+                          type: integer
+                          description: ID товара (SKU)
+                          example: 50
+                        quantity:
+                          type: integer
+                          description: Запрашиваемое количество
+                          example: 2
+                  warehouse_id:
+                    type: string
+                    description: ID склада для фильтрации (опционально)
+                    example: "1"
+              examples:
+                basic:
+                  value:
+                    items:
+                      - id: 50
+                        quantity: 2
+                    warehouse_id: "1"
+        responses:
+          '200':
+            description: Результат проверки корзины
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/BasketItem'
+                examples:
+                  success:
+                    value:
+                      items:
+                        - id: 50
+                          name: "Товар 1"
+                          regular_price: 1999.00
+                          final_price: 1999.00
+                          img: "https://example.com/image.jpg"
+                          url: "https://example.com/product/50"
+                          warehouses:
+                            - id: "1"
+                              available_quantity: 10
+                          dimensions:
+                            width: 100
+                            height: 200
+                            depth: 50
+                            weight: 500
+          '400':
+            $ref: '#/components/responses/BadRequest'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '404':
+            description: Товары не найдены
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+                example:
+                  error: "Products not found: 999"
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=orders:
+      post:
+        tags:
+          - orders
+        summary: Создать новый заказ
+        description: |
+          Создает новый заказ в системе Битрикс.
+          
+          При создании заказа:
+          - Проверяется наличие товаров и актуальность цен
+          - Создается или находится пользователь по email/телефону
+          - Создается заказ с указанными товарами
+          - Настраивается доставка и платежная система
+          - Автоматически создается или обновляется профиль покупателя
+        operationId: createOrder
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOrderRequest'
+              examples:
+                courier:
+                  value:
+                    order_id: "ORDER_12345"
+                    kit_order_id: "019bea36-b875-7ef8-9bb9-0e79e930cb1d"
+                    payment_method: "on_delivery"
+                    warehouse_id: "1"
+                    items:
+                      - id: 50
+                        quantity: 2
+                        price: 1999.00
+                        final_price: 1999.00
+                    customer:
+                      full_name: "Иван Иванов"
+                      phone: "+79991234567"
+                      email: "ivan@example.com"
+                    delivery:
+                      type: "courier"
+                      service: "YANDEX_GO"
+                      service_display_name: "Яндекс.Доставка"
+                      address:
+                        address: "г. Москва, ул. Тестовая, д. 1, кв. 10"
+                        city: "Москва"
+                        street: "ул. Тестовая"
+                        building: "1"
+                        apartment: "10"
+                        entrance: "2"
+                        floor: "3"
+                        intercom: "1234"
+                        zip: "123456"
+                pickup:
+                  value:
+                    order_id: "ORDER_12346"
+                    kit_order_id: "019bea36-b875-7ef8-9bb9-0e79e930cb1e"
+                    payment_method: "card"
+                    warehouse_id: "1"
+                    items:
+                      - id: 50
+                        quantity: 1
+                        price: 1999.00
+                        final_price: 1999.00
+                    customer:
+                      full_name: "Петр Петров"
+                      phone: "+79997654321"
+                      email: "petr@example.com"
+                    delivery:
+                      type: "pickup_point"
+                      service: "YANDEX_GO"
+                      service_display_name: "Яндекс.Доставка"
+                      address:
+                        pickup_point_id: "PP_12345"
+                        address: "Пункт выдачи №12345"
+        responses:
+          '201':
+            description: Заказ успешно создан
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    order_id:
+                      type: string
+                      description: Внешний ID заказа
+                    internal_order_id:
+                      type: integer
+                      description: Внутренний ID заказа в Битрикс
+                    status:
+                      type: string
+                      example: "created"
+                example:
+                  order_id: "ORDER_12345"
+                  internal_order_id: 185
+                  status: "created"
+          '400':
+            $ref: '#/components/responses/BadRequest'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '409':
+            description: Конфликт (заказ уже существует или изменились цены/наличие)
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    error:
+                      type: string
+                    actual_inventory:
+                      type: object
+                      description: Актуальные данные о наличии и ценах
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id:
+                                type: string
+                              warehouses:
+                                type: array
+                                items:
+                                  type: object
+                                  properties:
+                                    id:
+                                      type: string
+                                    available_quantity:
+                                      type: number
+                                    regular_price:
+                                      type: number
+                                    final_price:
+                                      type: number
+                example:
+                  error: "Prices have changed or items are out of stock"
+                  actual_inventory:
+                    items:
+                      - id: "50"
+                        warehouses:
+                          - id: "1"
+                            available_quantity: 5
+                            regular_price: 2000.00
+                            final_price: 1900.00
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=orders&action=placed:
+      post:
+        tags:
+          - orders
+        summary: Отметить заказ как оплаченный
+        description: |
+          Отмечает заказ как оплаченный и устанавливает статус из настроек модуля (STATUS_ON_PLACED).
+          
+          Если у заказа нет платежа, создается платеж и отмечается как оплаченный.
+          
+          Если передан параметр `payment_method=on_delivery`, заказ не будет помечен как оплаченный (paid: false).
+        operationId: markOrderPlaced
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: orderId
+            in: query
+            required: true
+            description: Внешний ID заказа (order_id)
+            schema:
+              type: string
+            example: "ORDER_12345"
+          - name: payment_method
+            in: query
+            required: false
+            description: Метод оплаты (например, on_delivery). Если указан on_delivery, заказ не будет помечен как оплаченный
+            schema:
+              type: string
+            example: "on_delivery"
+        responses:
+          '200':
+            description: Заказ успешно отмечен как оплаченный
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    order_id:
+                      type: string
+                    internal_order_id:
+                      type: integer
+                    status:
+                      type: string
+                      example: "placed"
+                    paid:
+                      type: boolean
+                      example: true
+                example:
+                  order_id: "ORDER_12345"
+                  internal_order_id: 185
+                  status: "placed"
+                  paid: true
+          '400':
+            $ref: '#/components/responses/BadRequest'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '404':
+            description: Заказ не найден
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+          '409':
+            description: Заказ уже отменен
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=orders&action=cancel:
+      post:
+        tags:
+          - orders
+        summary: Отменить заказ
+        description: |
+          Отменяет заказ и устанавливает статус из настроек модуля (STATUS_ON_CANCEL).
+          
+          Устанавливает поле CANCELED = 'Y' и дату отмены.
+          
+          Если заказ уже отменен, возвращается успешный ответ с сообщением.
+        operationId: cancelOrder
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: orderId
+            in: query
+            required: true
+            description: Внешний ID заказа (order_id)
+            schema:
+              type: string
+            example: "ORDER_12345"
+        responses:
+          '200':
+            description: Заказ успешно отменен
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    order_id:
+                      type: string
+                    internal_order_id:
+                      type: integer
+                    status:
+                      type: string
+                      example: "cancelled"
+                    message:
+                      type: string
+                      nullable: true
+                      description: Сообщение (если заказ уже был отменен)
+                      example: "Order is already cancelled"
+                example:
+                  order_id: "ORDER_12345"
+                  internal_order_id: 185
+                  status: "cancelled"
+                  message: "Order is already cancelled"
+          '400':
+            $ref: '#/components/responses/BadRequest'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '404':
+            description: Заказ не найден
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=orders&action=delivered:
+      post:
+        tags:
+          - orders
+        summary: Отметить заказ как доставленный
+        description: |
+          Отмечает заказ как доставленный и обновляет корзину заказа согласно переданным товарам.
+          
+          Обновляет корзину заказа товарами из `purchased_items`.
+          Отмечает отгрузки как доставленные (DEDUCTED = 'Y').
+          Устанавливает статус из настроек модуля (STATUS_ON_DELIVERED).
+          
+          Если заказ уже доставлен, возвращается успешный ответ с сообщением.
+        operationId: markOrderDelivered
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: orderId
+            in: query
+            required: true
+            description: Внешний ID заказа (order_id)
+            schema:
+              type: string
+            example: "ORDER_12345"
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - purchased_items
+                properties:
+                  purchased_items:
+                    type: array
+                    description: Список фактически доставленных товаров
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - quantity
+                      properties:
+                        id:
+                          type: integer
+                          description: ID товара
+                        quantity:
+                          type: integer
+                          description: Количество
+                  delivered_at:
+                    type: string
+                    format: date-time
+                    description: Дата доставки (опционально)
+              example:
+                purchased_items:
+                  - id: 50
+                    quantity: 2
+                delivered_at: "2025-12-19T13:30:00Z"
+        responses:
+          '200':
+            description: Заказ успешно отмечен как доставленный
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    order_id:
+                      type: string
+                    internal_order_id:
+                      type: integer
+                    status:
+                      type: string
+                      example: "delivered"
+                    message:
+                      type: string
+                      nullable: true
+                      description: Сообщение (если заказ уже был доставлен)
+                      example: "Order already delivered"
+                example:
+                  order_id: "ORDER_12345"
+                  internal_order_id: 185
+                  status: "delivered"
+                  message: "Order already delivered"
+          '400':
+            $ref: '#/components/responses/BadRequest'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '404':
+            description: Заказ или товар не найден
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+          '409':
+            description: Конфликт (заказ отменен, недостаточно товара)
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+    /?method=settings:
+      get:
+        tags:
+          - settings
+        summary: Получить настройки системы
+        description: |
+          Возвращает подробную информацию о настройках системы:
+          - Состояние складского учёта
+          - Настройки резервирования
+          - Список складов
+          - Настройки модуля
+          - Информация о системе
+          - Статистика каталога
+          - Настройки каталога
+          - Информация о службах доставки и платежных системах
+          - Информация о сайте
+          - Информация о свойствах заказов
+        operationId: getSettings
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: Настройки системы
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Settings'
+          '401':
+            $ref: '#/components/responses/Unauthorized'
+          '500':
+            $ref: '#/components/responses/ServerError'
+
+  components:
+    securitySchemes:
+      bearerAuth:
+        type: http
+        scheme: bearer
+        bearerFormat: JWT
+        description: |
+          Bearer токен для авторизации. Токен настраивается в админ-панели модуля.
+          Формат: `Bearer YOUR_TOKEN`
+
+    schemas:
+      Warehouse:
+        type: object
+        properties:
+          id:
+            type: string
+            description: ID склада
+          title:
+            type: string
+            description: Название склада
+          xml_id:
+            type: string
+            nullable: true
+            description: XML_ID склада
+          active:
+            type: string
+            enum: ["Y", "N"]
+            description: Активен ли склад
+          address:
+            type: string
+            nullable: true
+            description: Адрес склада
+          phone:
+            type: string
+            nullable: true
+            description: Телефон склада
+          schedule:
+            type: string
+            nullable: true
+            description: График работы
+          description:
+            type: string
+            nullable: true
+            description: Описание склада
+          gps_n:
+            type: string
+            nullable: true
+            description: GPS координата (северная широта)
+          gps_s:
+            type: string
+            nullable: true
+            description: GPS координата (южная долгота)
+
+      BasketItem:
+        type: object
+        properties:
+          id:
+            type: integer
+            description: ID товара
+          name:
+            type: string
+            description: Название товара
+          regular_price:
+            type: number
+            format: float
+            description: Обычная цена
+          final_price:
+            type: number
+            format: float
+            description: Финальная цена (с учетом скидок)
+          img:
+            type: string
+            format: uri
+            nullable: true
+            description: URL изображения товара
+          url:
+            type: string
+            format: uri
+            nullable: true
+            description: URL страницы товара
+          warehouses:
+            type: array
+            description: Наличие на складах
+            items:
+              type: object
+              properties:
+                id:
+                  type: string
+                  description: ID склада
+                available_quantity:
+                  type: number
+                  description: Доступное количество
+          dimensions:
+            type: object
+            nullable: true
+            description: Габариты и вес товара
+            properties:
+              width:
+                type: integer
+                description: Ширина (мм)
+              height:
+                type: integer
+                description: Высота (мм)
+              depth:
+                type: integer
+                description: Глубина (мм)
+              weight:
+                type: integer
+                description: Вес (г)
+
+      CreateOrderRequest:
+        type: object
+        required:
+          - order_id
+          - warehouse_id
+          - items
+          - customer
+          - delivery
+        properties:
+          order_id:
+            type: string
+            description: Уникальный внешний ID заказа
+          kit_order_id:
+            type: string
+            nullable: true
+            description: ID заказа в Яндекс KIT (опционально)
+            example: "019bea36-b875-7ef8-9bb9-0e79e930cb1d"
+          payment_method:
+            type: string
+            nullable: true
+            description: Метод оплаты (например, on_delivery). Используется для определения, нужно ли помечать заказ как оплаченный при создании
+            example: "on_delivery"
+          warehouse_id:
+            type: string
+            description: ID склада для отгрузки
+          items:
+            type: array
+            description: Список товаров
+            items:
+              type: object
+              required:
+                - id
+                - quantity
+                - price
+                - final_price
+              properties:
+                id:
+                  type: integer
+                  description: ID товара
+                quantity:
+                  type: integer
+                  description: Количество
+                price:
+                  type: number
+                  format: float
+                  description: Обычная цена товара
+                final_price:
+                  type: number
+                  format: float
+                  description: Финальная цена товара (с учетом скидок)
+          customer:
+            type: object
+            required:
+              - full_name
+              - phone
+              - email
+            properties:
+              full_name:
+                type: string
+                description: Полное имя покупателя
+              phone:
+                type: string
+                description: Телефон покупателя
+              email:
+                type: string
+                format: email
+                description: Email покупателя
+          delivery:
+            type: object
+            required:
+              - type
+              - service
+            properties:
+              type:
+                type: string
+                enum: [courier, pickup_point]
+                description: Тип доставки
+              service:
+                type: string
+                description: Служба доставки (например, YANDEX_GO, CDEK)
+              service_display_name:
+                type: string
+                nullable: true
+                description: Отображаемое название службы доставки (опционально)
+                example: "Яндекс.Доставка"
+              price:
+                type: number
+                format: float
+                nullable: true
+                description: Стоимость доставки
+              cost:
+                type: number
+                format: float
+                nullable: true
+                description: Альтернативное поле для стоимости доставки
+              address:
+                type: object
+                description: Адрес доставки (для courier) или данные ПВЗ (для pickup_point)
+                properties:
+                  address:
+                    type: string
+                    nullable: true
+                    description: Полный адрес доставки
+                  city:
+                    type: string
+                    nullable: true
+                    description: Город
+                  street:
+                    type: string
+                    nullable: true
+                    description: Улица
+                  building:
+                    type: string
+                    nullable: true
+                    description: Дом
+                  apartment:
+                    type: string
+                    nullable: true
+                    description: Квартира
+                  entrance:
+                    type: string
+                    nullable: true
+                    description: Подъезд
+                  floor:
+                    type: string
+                    nullable: true
+                    description: Этаж
+                  intercom:
+                    type: string
+                    nullable: true
+                    description: Домофон
+                  zip:
+                    type: string
+                    nullable: true
+                    description: Почтовый индекс
+                  pickup_point_id:
+                    type: string
+                    nullable: true
+                    description: ID пункта выдачи (для pickup_point)
+
+      Settings:
+        type: object
+        properties:
+          store_control_enabled:
+            type: boolean
+            description: Включен ли складской учёт
+          reservation_enabled:
+            type: boolean
+            description: Включено ли резервирование
+          warehouses_count:
+            type: integer
+            description: Количество складов
+          warehouses:
+            type: array
+            items:
+              type: object
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+          module_settings:
+            type: object
+            description: Настройки модуля
+          system_info:
+            type: object
+            description: Информация о системе
+          catalog_stats:
+            type: object
+            description: Статистика каталога
+          reservation_details:
+            type: object
+            description: Детали резервирования
+          catalog_settings:
+            type: object
+            description: Настройки каталога
+          services:
+            type: object
+            description: Информация о службах доставки и платежных системах
+          site_info:
+            type: object
+            description: Информация о сайте
+          order_properties:
+            type: object
+            description: Информация о свойствах заказов
+
+      Error:
+        type: object
+        properties:
+          error:
+            type: string
+            description: Сообщение об ошибке
+
+    responses:
+      BadRequest:
+        description: Неверный формат запроса
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Error'
+            example:
+              error: "Invalid request format: required fields are missing"
+
+      Unauthorized:
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Error'
+            example:
+              error: "Unauthorized"
+
+      ServerError:
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Error'
+            example:
+              error: "Failed to process request"
