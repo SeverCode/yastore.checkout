@@ -6,12 +6,9 @@ use Bitrix\Main\Config\Option;
 use Bitrix\Main\Engine\Controller;
 use Bitrix\Main\Error;
 use Bitrix\Main\Loader;
-use Bitrix\Main\Web\HttpClient;
 use Bitrix\Sale;
 use Bitrix\Sale\Basket;
 use Bitrix\Sale\Order;
-
-use Yastore\Checkout\Tokens;
 
 class Checkout extends Controller
 {
@@ -41,6 +38,10 @@ class Checkout extends Controller
         ];
     }
 
+    /**
+     * Строит URL для редиректа на Яндекс KIT GET /express (host, metric_client_id, data).
+     * Ответ API: 302 redirect to kit checkout или 500.
+     */
     public function basketToCheckoutAction($metricaClientId)
     {
         $basket = Basket::loadItemsForFUser(Sale\Fuser::getId(), $this->siteId);
@@ -49,56 +50,70 @@ class Checkout extends Controller
             return null;
         }
 
-        $orderData = [
-            'items' => [],
-        ];
+        $expressData = $this->buildExpressData($basket);
+        if (empty($expressData['items'])) {
+            $this->addError(new Error('No valid basket items', 500));
+            return null;
+        }
 
+        $apiBase = rtrim(Option::get(self::$MODULE_ID, 'YANDEX_KIT_API_URL', 'https://integration.yastore.yandex.net/'), '/');
+        $expressUrl = $apiBase . '/express';
+
+        $request = Application::getInstance()->getContext()->getRequest();
+        $host = $request->getHttpHost() ?: $request->getServer()->get('HTTP_HOST');
+
+        $dataJson = json_encode($expressData, JSON_UNESCAPED_UNICODE);
+        $params = [
+            'host' => $host,
+            'data' => base64_encode($dataJson),
+        ];
+        if ($metricaClientId !== null && $metricaClientId !== '') {
+            $params['metric_client_id'] = $metricaClientId;
+        }
+
+        $redirectUrl = $expressUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+
+        return [
+            'status' => 'success',
+            'url' => $redirectUrl,
+        ];
+    }
+
+    /**
+     * Данные для GET /express: items[{ id, quantity, price, final_price }], city (optional).
+     */
+    private function buildExpressData(Basket $basket)
+    {
         $discounts = $this->getDiscounts($basket);
+        $items = [];
 
         foreach ($basket as $basketItem) {
             $productId = $basketItem->getProductId();
-            $dataItem = $this->createDataItem($basketItem, $productId, $discounts);
-            if (!empty($dataItem)) {
-                $orderData['items'][] = $dataItem;
+            $basketCode = $basketItem->getBasketCode();
+            $quantity = (int) $basketItem->getQuantity();
+            $basePrice = (float) $basketItem->getBasePrice();
+            $finalPrice = (float) $basketItem->getFinalPrice();
+
+            if (isset($discounts['PRICES']['BASKET'][$basketCode]['PRICE'])) {
+                $finalPrice = (float) $discounts['PRICES']['BASKET'][$basketCode]['PRICE'];
             }
-        }
+            if ((int) $finalPrice == 0 && (int) $basePrice == 0) {
+                $resultPrice = $this->getResultPrice($productId);
+                if ($resultPrice) {
+                    $basePrice = (float) $resultPrice['BASE_PRICE'];
+                    $finalPrice = (float) $resultPrice['DISCOUNT_PRICE'];
+                }
+            }
 
-        $order = $this->createOrder($basket);
-        $orderResult = $order->save();
-
-        if (!$orderResult->isSuccess()) {
-            $this->addError(new Error('Failed to create order: ' . implode(', ', $orderResult->getErrorMessages()), 500));
-
-            return null;
-        }
-
-        $orderData['order_id'] = (string) $order->getId();
-        $orderData['ya_metrika_client_id'] = $metricaClientId;
-
-        $payload = json_encode($orderData, JSON_UNESCAPED_UNICODE);
-
-        $httpClient = new HttpClient();
-        $httpClient->setHeader('Content-Type', 'application/json');
-
-        $tokens = new Tokens();
-        $jwtToken = $tokens->generateToken();
-        $httpClient->setHeader('Authorization', 'Bearer ' . $jwtToken);
-
-        $apiUrl = self::$CHECKOUT_URL_BASE . '/api/public/v1/orders';
-        $apiResult = $httpClient->post($apiUrl, $payload);
-        $apiResponse = json_decode($apiResult, true);
-
-        if (isset($apiResponse['signature']) && isset($apiResponse['order']) && isset($apiResponse['order']['id'])) {
-            $storeSlug = $apiResponse['store_slug'];
-            $redirectUrl = self::$CHECKOUT_URL_BASE . "/orders/$storeSlug/" . $apiResponse['order']['id'] . '?signature=' . $apiResponse['signature'];
-            return [
-                'status' => 'success',
-                'url' => $redirectUrl,
+            $items[] = [
+                'id' => (string) $productId,
+                'quantity' => $quantity,
+                'price' => $basePrice,
+                'final_price' => $finalPrice,
             ];
-        } else {
-            $this->addError(new Error(isset($apiResponse['message']) ? $apiResponse['message'] : 'API Error' . json_encode($apiResponse, JSON_UNESCAPED_UNICODE), 500));
-            return null;
         }
+
+        return ['items' => $items];
     }
 
     private function createDataItem($basketItem, $productId, $discounts)

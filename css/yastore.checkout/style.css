@@ -1,16 +1,16 @@
 #yastore-checkout-button {
     border: none;
     outline: none;
-    border-radius: 100px;
-    background-color: rgba(248, 96, 74, 1);
+    border-radius: var(--yakit-button-border-radius, 0);
+    background-color: var(--yakit-button-bg-color, rgb(255, 99, 41));
+    color: var(--yakit-button-text-color, #ffffff);
     padding: var(--yakit-button-padding, 0px 12px 0 12px);
     margin: var(--yakit-button-margin, 12px 0 0 10px);
     height: var(--purchase-button-height, 42px);
     width: var(--purchase-button-width, 100%);
+    font-family: var(--yakit-button-font, inherit);
     font-weight: 400;
     line-height: 16px;
-    font-family: YS Text -webkit-body;
-    color: white;
     display: flex;
     gap: 6px;
     align-items: center;
@@ -20,9 +20,9 @@
 
 #yastore-checkout-button::active {
     transform: scale(.97);
-    background-color: rgb(224, 80, 65, 1);
+    filter: brightness(0.9);
 }
 
 #yastore-checkout-button:hover {
-    background-color: rgba(224, 86, 67, 1);
+    background: var(--yakit-button-hover-bg, var(--yakit-button-bg-color, rgb(255, 99, 41)));
 }

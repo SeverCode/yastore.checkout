@@ -34,6 +34,36 @@ if (\Bitrix\Main\Loader::includeModule('catalog') && \Bitrix\Main\Loader::includ
     }
 }
 
+function getYastoreCheckoutButtonCssDefault()
+{
+    return "#yastore-checkout-button {\n"
+        . "    border: none;\n"
+        . "    outline: none;\n"
+        . "    border-radius: 12px;\n"
+        . "    background-color: rgb(255, 99, 41);\n"
+        . "    color: #ffffff;\n"
+        . "    padding: 0 12px;\n"
+        . "    margin: 12px 0 0 10px;\n"
+        . "    height: 42px;\n"
+        . "    width: 100%;\n"
+        . "    font-weight: 600;\n"
+        . "    font-family: inherit;\n"
+        . "    line-height: 16px;\n"
+        . "    display: flex;\n"
+        . "    gap: 6px;\n"
+        . "    align-items: center;\n"
+        . "    justify-content: center;\n"
+        . "    transition: transform .12s ease-out, filter .12s ease-out;\n"
+        . "}\n"
+        . "#yastore-checkout-button:hover {\n"
+        . "    background: linear-gradient(245deg, rgba(255, 99, 41, 0) 85%, #FFC002 109%), linear-gradient(77deg, rgb(255, 192, 2, .5) .5%, rgba(255, 99, 41, .18) 24%), radial-gradient(57% 134.79% at 0% 0%, #FF27F5 0%, #FF6329 100%);\n"
+        . "}\n"
+        . "#yastore-checkout-button:active {\n"
+        . "    transform: scale(.97);\n"
+        . "    filter: brightness(0.9);\n"
+        . "}";
+}
+
 $aTabs = array(
     array(
         'DIV' => 'edit1',
@@ -62,8 +92,18 @@ $aTabs = array(
             array('AUTO_COMPLETE_STATUS', 'Статус для автоматического завершения', 'F', array('select', $arStatuses)),
         )
     ),
-        array(
+    array(
         'DIV' => 'edit4',
+        'TAB' => 'Кнопка «Купить в 1 клик»',
+        'OPTIONS' => array(
+            array('SHOW_BUTTON', 'Показывать кнопку на странице корзины', 'N', array('checkbox')),
+            array('BUTTON_ANCHOR', 'CSS-селектор контейнера для кнопки', '.basket-checkout-section-inner', array('text', 100)),
+            array('YAKIT_BUTTON_INSERT_AFTER', 'CSS-селектор элемента, после которого вставлять кнопку (необязательно)', '', array('text', 100)),
+            array('YAKIT_BUTTON_CSS', 'CSS-стили кнопки', getYastoreCheckoutButtonCssDefault(), array('textarea', 18, 80)),
+        )
+    ),
+    array(
+        'DIV' => 'edit5',
         'TAB' => 'Торговые предложения',
         'OPTIONS' => array(
             array('USE_SKU', 'Использовать торговые предложения', 'N', array('checkbox')),
@@ -374,6 +414,9 @@ if ($request->isPost() && check_bitrix_sessid() && !$tokenGenerated) {
                     Option::set($module_id, 'YANDEX_KIT_CREDENTIALS', '');
                 }
             } else {
+                if ($optionName == 'YAKIT_BUTTON_CSS' && trim((string) $value) === '') {
+                    $value = getYastoreCheckoutButtonCssDefault();
+                }
                 Option::set($module_id, $optionName, (string) $value);
             }
         }
@@ -410,6 +453,14 @@ if (!empty($savedJwtToken) && !empty($savedCredentials)) {
 
 $tabControl = new CAdminTabControl('tabControl', $aTabs);
 ?>
+<style>
+#edit4 input.yastore-btn-option-input,
+#edit4 textarea.yastore-btn-option-input {
+    width: 400px;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+</style>
 
 <form method='POST' id='yastore_checkout_options_form'
     action='<? echo $APPLICATION->GetCurPage() ?>?mid=<?= htmlspecialcharsbx($module_id) ?>&lang=<?= LANGUAGE_ID ?>'
@@ -446,6 +497,11 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                 }
             } elseif ($arOption[0] == 'SKU_COLOR_PROPERTY') {
                 $val = Option::get($module_id, 'SKU_COLOR_PROPERTY', '');
+            } elseif ($arOption[0] == 'YAKIT_BUTTON_CSS') {
+                $val = Option::get($module_id, 'YAKIT_BUTTON_CSS', '');
+                if (trim($val) === '') {
+                    $val = getYastoreCheckoutButtonCssDefault();
+                }
             } else {
                 $val = Option::get($module_id, $arOption[0], $arOption[2]);
             }
@@ -483,10 +539,14 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                     <? endif; ?>
                     <? if ($arOption[3][0] == 'text'): ?>
                         <input type='text' name='<?= htmlspecialcharsbx($arOption[0]) ?>' value='<?= htmlspecialcharsbx($val) ?>'
-                            size='<?= htmlspecialcharsbx($arOption[3][1]) ?>' id='<?= htmlspecialcharsbx($arOption[0]) ?>'
+                            size='<?= htmlspecialcharsbx($arOption[3][1]) ?>' id='<?= htmlspecialcharsbx($arOption[0]) ?>'<? if ($aTab['DIV'] == 'edit4'): ?> class='yastore-btn-option-input'<? endif; ?>
                             <? if ($arOption[0] == 'YANDEX_KIT_CREDENTIALS'): ?>
                                 onchange='checkConnectionButtonState()' onkeyup='checkConnectionButtonState()'
                             <? endif; ?>>
+                    <? endif; ?>
+                    <? if ($arOption[3][0] == 'textarea'): ?>
+                        <textarea name='<?= htmlspecialcharsbx($arOption[0]) ?>' id='<?= htmlspecialcharsbx($arOption[0]) ?>'
+                            rows='<?= (int)($arOption[3][1] ?? 8) ?>' cols='<?= (int)($arOption[3][2] ?? 80) ?>'<? if ($aTab['DIV'] == 'edit4'): ?> class='yastore-btn-option-input'<? endif; ?>><?= htmlspecialcharsbx($val) ?></textarea>
                     <? endif; ?>
                     <? if ($arOption[3][0] == 'select'): ?>
                         <select name='<?= htmlspecialcharsbx($arOption[0]) ?>'

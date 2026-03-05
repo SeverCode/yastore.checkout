@@ -10,8 +10,73 @@ class Handlers
 {
     static $MODULE_ID = "yastore.checkout";
 
+    /**
+     * Подключение JS/CSS кнопки «Купить в 1 клик» на странице корзины.
+     */
     public static function appendYandexCheckoutJs()
     {
+        $request = \Bitrix\Main\Context::getCurrent()->getRequest();
+        $requestPage = $request->getRequestedPage();
+        $basketPath = Option::get('sale', 'PATH_TO_BASKET', 'personal/cart/');
+        $basketPathNorm = trim(trim($basketPath), '/');
+        $showButton = Option::get(self::$MODULE_ID, 'SHOW_BUTTON', 'N');
+
+        $onBasketPage = ($basketPathNorm !== '' && (strpos($requestPage, $basketPathNorm) !== false));
+        if ($showButton !== 'Y' || !$onBasketPage) {
+            return;
+        }
+
+        $buttonAnchor = Option::get(self::$MODULE_ID, 'BUTTON_ANCHOR', '.basket-checkout-section-inner');
+        $buttonInsertAfter = Option::get(self::$MODULE_ID, 'YAKIT_BUTTON_INSERT_AFTER', '');
+        $buttonCss = trim(Option::get(self::$MODULE_ID, 'YAKIT_BUTTON_CSS', ''));
+        if ($buttonCss === '') {
+            $buttonCss = self::getDefaultButtonCss();
+        }
+        $buttonCss = str_replace('</style>', '', $buttonCss);
+        $buttonCssJs = str_replace(["\\", "\r", "\n"], ["\\\\", "\\r", "\\n"], $buttonCss);
+        $buttonCssJs = str_replace(["'"], ["\\'"], $buttonCssJs);
+
+        $buttonAnchor = str_replace(["'", '"', '\\'], ["\\'", '\\"', '\\\\'], $buttonAnchor);
+        $buttonInsertAfter = str_replace(["'", '"', '\\'], ["\\'", '\\"', '\\\\'], $buttonInsertAfter);
+
+        Asset::getInstance()->addString(
+            "<script>\n" .
+            "var BUTTON_ANCHOR = '" . $buttonAnchor . "';\n" .
+            "var YAKIT_BUTTON_INSERT_AFTER = '" . $buttonInsertAfter . "';\n" .
+            "var YAKIT_BUTTON_CSS = '" . $buttonCssJs . "';\n" .
+            "</script>"
+        );
+        Asset::getInstance()->addJs('/bitrix/js/yastore.checkout/script.js');
+    }
+
+    private static function getDefaultButtonCss()
+    {
+        return "#yastore-checkout-button {\n"
+            . "    border: none;\n"
+            . "    outline: none;\n"
+            . "    border-radius: 12px;\n"
+            . "    background-color: rgb(255, 99, 41);\n"
+            . "    color: #ffffff;\n"
+            . "    padding: 0 12px;\n"
+            . "    margin: 12px 0 0 10px;\n"
+            . "    height: 42px;\n"
+            . "    width: 100%;\n"
+            . "    font-weight: 600;\n"
+            . "    font-family: inherit;\n"
+            . "    line-height: 16px;\n"
+            . "    display: flex;\n"
+            . "    gap: 6px;\n"
+            . "    align-items: center;\n"
+            . "    justify-content: center;\n"
+            . "    transition: transform .12s ease-out, filter .12s ease-out;\n"
+            . "}\n"
+            . "#yastore-checkout-button:hover {\n"
+            . "    background: linear-gradient(245deg, rgba(255, 99, 41, 0) 85%, #FFC002 109%), linear-gradient(77deg, rgb(255, 192, 2, .5) .5%, rgba(255, 99, 41, .18) 24%), radial-gradient(57% 134.79% at 0% 0%, #FF27F5 0%, #FF6329 100%);\n"
+            . "}\n"
+            . "#yastore-checkout-button:active {\n"
+            . "    transform: scale(.97);\n"
+            . "    filter: brightness(0.9);\n"
+            . "}";
     }
 
     /**
