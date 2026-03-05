@@ -170,7 +170,9 @@
                 schema:
                   $ref: '#/components/schemas/Error'
                 example:
-                  error: "Products not found: 999"
+                  error:
+                    message: "Products not found: 999"
+                    code: NOT_FOUND
           '500':
             $ref: '#/components/responses/ServerError'
 
@@ -308,7 +310,9 @@
                                     final_price:
                                       type: number
                 example:
-                  error: "Prices have changed or items are out of stock"
+                  error:
+                    message: "Prices have changed or items are out of stock"
+                    code: INVENTORY_CONFLICT
                   actual_inventory:
                     items:
                       - id: "50"
@@ -880,12 +884,35 @@
             type: object
             description: Информация о свойствах заказов
 
+      ErrorCode:
+        type: string
+        enum:
+          - INVALID_INPUT
+          - UNAUTHORIZED
+          - NOT_FOUND
+          - CONFLICT
+          - INTERNAL_ERROR
+          - PRODUCT_NOT_FOUND
+          - INVENTORY_CONFLICT
+        description: Код ошибки
+
       Error:
         type: object
+        required:
+          - error
         properties:
           error:
-            type: string
-            description: Сообщение об ошибке
+            type: object
+            required:
+              - message
+              - code
+            properties:
+              message:
+                type: string
+                description: Сообщение об ошибке
+                example: Invalid input
+              code:
+                $ref: '#/components/schemas/ErrorCode'
 
     responses:
       BadRequest:
@@ -895,7 +922,9 @@
             schema:
               $ref: '#/components/schemas/Error'
             example:
-              error: "Invalid request format: required fields are missing"
+              error:
+                message: "Invalid request format: required fields are missing"
+                code: INVALID_INPUT
 
       Unauthorized:
         description: Не авторизован
@@ -904,7 +933,9 @@
             schema:
               $ref: '#/components/schemas/Error'
             example:
-              error: "Unauthorized"
+              error:
+                message: "Unauthorized"
+                code: UNAUTHORIZED
 
       ServerError:
         description: Внутренняя ошибка сервера
@@ -913,4 +944,6 @@
             schema:
               $ref: '#/components/schemas/Error'
             example:
-              error: "Failed to process request"
+              error:
+                message: "Failed to process request"
+                code: INTERNAL_ERROR

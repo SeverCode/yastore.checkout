@@ -73,8 +73,12 @@ class OrdersHandler extends BaseHandler
             ])->fetch();
 
             if ($existingByXmlId) {
-                http_response_code(409);
-                echo Json::encode(['order_id' => (string)$existingByXmlId['XML_ID']]);
+                $this->sendErrorWithData(
+                    'Order already exists',
+                    409,
+                    self::ERROR_CONFLICT,
+                    ['order_id' => (string)$existingByXmlId['XML_ID']]
+                );
                 return;
             }
 
@@ -97,8 +101,12 @@ class OrdersHandler extends BaseHandler
                 ])->fetch();
 
                 if ($previousOrder && $previousOrder['CANCELED'] !== 'Y') {
-                    http_response_code(409);
-                    echo Json::encode(['order_id' => (string)$previousOrder['XML_ID']]);
+                    $this->sendErrorWithData(
+                        'Order already exists',
+                        409,
+                        self::ERROR_CONFLICT,
+                        ['order_id' => (string)$previousOrder['XML_ID']]
+                    );
                     return;
                 }
                 // Если заказ отменён — создаём новый (продолжаем выполнение)
@@ -106,11 +114,12 @@ class OrdersHandler extends BaseHandler
 
             $conflicts = $this->checkInventoryConflicts($items, $warehouseId);
             if (!empty($conflicts)) {
-                http_response_code(409);
-                echo Json::encode([
-                    'error' => 'Prices have changed or items are out of stock',
-                    'actual_inventory' => $conflicts
-                ]);
+                $this->sendErrorWithData(
+                    'Prices have changed or items are out of stock',
+                    409,
+                    self::ERROR_INVENTORY_CONFLICT,
+                    ['actual_inventory' => $conflicts]
+                );
                 return;
             }
 
@@ -152,13 +161,9 @@ class OrdersHandler extends BaseHandler
 
                 // Получаем информацию о товаре
                 $product = \Bitrix\Iblock\ElementTable::getById($productId)->fetch();
-                if (!$product) {    
-                    http_response_code(404);
-                    echo Json::encode([
-                        'error' => 'Product not found: ' . $productId
-                    ]);
+                if (!$product) {
+                    $this->sendError('Product not found: ' . $productId, 404, self::ERROR_PRODUCT_NOT_FOUND);
                     return;
-                    //continue;
                 }
 
                 // Добавляем товар в корзину
@@ -284,7 +289,7 @@ class OrdersHandler extends BaseHandler
             
             if (!$result->isSuccess()) {
                 $errors = $result->getErrorMessages();
-                $this->sendError('Failed to create o    rder: ' . implode(', ', $errors), 500);
+                $this->sendError('Failed to create order: ' . implode(', ', $errors), 500);
                 return;
             }
             
@@ -898,12 +903,12 @@ class OrdersHandler extends BaseHandler
                     $hasConflict = true;
                 }
                 
-                // Сравниваем цены (с допуском 0.01 для учета погрешности округления)
-                if (abs($currentRegularPrice - $requestedRegularPrice) > 0.01) {
+                // Сравниваем цены (ceil для округления перед сравнением)
+                if (ceil($currentRegularPrice) !== ceil($requestedRegularPrice)) {
                     $hasConflict = true;
                 }
                 
-                if (abs($currentFinalPrice - $requestedFinalPrice) > 0.01) {
+                if (ceil($currentFinalPrice) !== ceil($requestedFinalPrice)) {
                     $hasConflict = true;
                 }
 
@@ -1072,12 +1077,12 @@ class OrdersHandler extends BaseHandler
                 $hasConflict = true;
             }
             
-            // Сравниваем цены (с допуском 0.01 для учета погрешности округления)
-            if (abs($currentRegularPrice - $requestedRegularPrice) > 0.01) {
+            // Сравниваем цены (ceil для округления перед сравнением)
+            if (ceil($currentRegularPrice) !== ceil($requestedRegularPrice)) {
                 $hasConflict = true;
             }
             
-            if (abs($currentFinalPrice - $requestedFinalPrice) > 0.01) {
+            if (ceil($currentFinalPrice) !== ceil($requestedFinalPrice)) {
                 $hasConflict = true;
             }
 

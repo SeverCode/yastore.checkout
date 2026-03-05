@@ -20,16 +20,25 @@ if ($authHeader !== '' && strpos($authHeader, 'Bearer ') === 0) {
 }
 
 if (!$isValidToken) {
-    if (!defined("ERROR_404")) {
-        define("ERROR_404", "Y");
+    $tokenReceived = ($authHeader !== '' && strpos($authHeader, 'Bearer ') === 0)
+        ? substr($authHeader, 7)
+        : $authHeader;
+    if ($tokenReceived === '') {
+        $tokenForResponse = '(empty)';
+    } elseif (strlen($tokenReceived) > 16) {
+        $tokenForResponse = substr($tokenReceived, 0, 8) . '…' . substr($tokenReceived, -4);
+    } else {
+        $tokenForResponse = substr($tokenReceived, 0, 4) . '…';
     }
-    
+
+    header('Content-Type: application/json; charset=utf-8');
     \CHTTP::setStatus("404 Not Found");
-    
-    global $APPLICATION;
-    if ($APPLICATION->RestartWorkarea()) {
-        require(\Bitrix\Main\Application::getDocumentRoot() . "/404.php");
-    }
+    echo \Bitrix\Main\Web\Json::encode([
+        'error' => [
+            'message' => 'Invalid or missing token. Received: ' . $tokenForResponse,
+            'code' => 'UNAUTHORIZED'
+        ]
+    ]);
     die();
 }
 

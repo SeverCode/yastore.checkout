@@ -9,6 +9,15 @@ use Bitrix\Catalog\StoreProductTable;
 
 abstract class BaseHandler
 {
+    /** Коды ошибок для внешней системы (ErrorCode) */
+    const ERROR_INVALID_INPUT = 'INVALID_INPUT';
+    const ERROR_UNAUTHORIZED = 'UNAUTHORIZED';
+    const ERROR_NOT_FOUND = 'NOT_FOUND';
+    const ERROR_CONFLICT = 'CONFLICT';
+    const ERROR_INTERNAL = 'INTERNAL_ERROR';
+    const ERROR_PRODUCT_NOT_FOUND = 'PRODUCT_NOT_FOUND';
+    const ERROR_INVENTORY_CONFLICT = 'INVENTORY_CONFLICT';
+
     protected $request;
     protected $moduleId = 'yastore.checkout';
 
@@ -25,10 +34,63 @@ abstract class BaseHandler
         echo Json::encode($data);
     }
 
-    protected function sendError($message, $httpCode = 500)
+    /**
+     * Отправка ошибки в стандартном формате: error.message + error.code
+     * @param string $message Текст ошибки
+     * @param int $httpCode HTTP-код (400, 401, 404, 409, 500)
+     * @param string|null $code Код ошибки (ErrorCode); если null — выводится по умолчанию из $httpCode
+     */
+    protected function sendError($message, $httpCode = 500, $code = null)
     {
+        if ($code === null) {
+            $code = $this->getDefaultErrorCodeForHttpStatus($httpCode);
+        }
         http_response_code($httpCode);
-        echo Json::encode(['error' => $message]);
+        echo Json::encode([
+            'error' => [
+                'message' => $message,
+                'code' => $code
+            ]
+        ]);
+    }
+
+    /**
+     * Отправка ошибки с дополнительными полями в теле (например actual_inventory)
+     * @param string $message Текст ошибки
+     * @param int $httpCode HTTP-код
+     * @param string|null $code Код ошибки
+     * @param array $extra Ключи и значения, добавляемые в корень JSON (например ['actual_inventory' => $data])
+     */
+    protected function sendErrorWithData($message, $httpCode = 500, $code = null, array $extra = [])
+    {
+        if ($code === null) {
+            $code = $this->getDefaultErrorCodeForHttpStatus($httpCode);
+        }
+        http_response_code($httpCode);
+        $body = array_merge(
+            [
+                'error' => [
+                    'message' => $message,
+                    'code' => $code
+                ]
+            ],
+            $extra
+        );
+        echo Json::encode($body);
+    }
+
+    /**
+     * Код ошибки по умолчанию для HTTP-статуса
+     */
+    private function getDefaultErrorCodeForHttpStatus($httpCode)
+    {
+        $map = [
+            400 => self::ERROR_INVALID_INPUT,
+            401 => self::ERROR_UNAUTHORIZED,
+            404 => self::ERROR_NOT_FOUND,
+            409 => self::ERROR_CONFLICT,
+        ];
+        return $map[(int)$httpCode] ?? self::ERROR_INTERNAL;
     }
 
     /**

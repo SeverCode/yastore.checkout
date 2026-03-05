@@ -561,9 +561,15 @@ class yastore_checkout extends CModule
                 mkdir($targetDir, 0755, true);
             }
             
-            // Копируем файл
+            // Копируем index.php
             if (file_exists($sourceFile)) {
                 copy($sourceFile, $targetFile);
+            }
+            // Копируем .htaccess (передача заголовка Authorization в PHP)
+            $sourceHtaccess = $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/' . $this->MODULE_ID . '/api/.htaccess';
+            $targetHtaccess = $targetDir . '.htaccess';
+            if (file_exists($sourceHtaccess)) {
+                copy($sourceHtaccess, $targetHtaccess);
             }
         } catch (Exception $e) {
             // Игнорируем ошибки
@@ -576,11 +582,15 @@ class yastore_checkout extends CModule
             $targetDir = $_SERVER['DOCUMENT_ROOT'] . '/yastore.checkout/';
             $targetFile = $targetDir . 'index.php';
             
-            // Удаляем файл
+            // Удаляем index.php
             if (file_exists($targetFile)) {
                 unlink($targetFile);
             }
-            
+            // Удаляем .htaccess
+            $targetHtaccess = $targetDir . '.htaccess';
+            if (file_exists($targetHtaccess)) {
+                unlink($targetHtaccess);
+            }
             // Удаляем директорию если она пуста
             if (is_dir($targetDir) && count(scandir($targetDir)) == 2) {
                 rmdir($targetDir);
