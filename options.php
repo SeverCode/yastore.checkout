@@ -49,6 +49,26 @@ $arProductIdFields = array(
     'PROPERTY' => 'Свойство инфоблока',
 );
 
+// Список свойств выбранного инфоблока товаров для поля «Код свойства»
+$arProductIdProperties = array('' => '— Не выбрано —');
+$productIblockIdForProps = Option::get($module_id, 'YAKIT_PRODUCT_IBLOCK_ID', '');
+if ($request->isPost()) {
+    $postIblock = $request->getPost('YAKIT_PRODUCT_IBLOCK_ID');
+    if ($postIblock !== null && (string)$postIblock !== '') {
+        $productIblockIdForProps = $postIblock;
+    }
+}
+if ((int)$productIblockIdForProps > 0 && \Bitrix\Main\Loader::includeModule('iblock')) {
+    $propRes = \CIBlockProperty::GetList(
+        array('SORT' => 'ASC', 'NAME' => 'ASC'),
+        array('IBLOCK_ID' => $productIblockIdForProps, 'ACTIVE' => 'Y')
+    );
+    while ($p = $propRes->GetNext()) {
+        $code = !empty($p['CODE']) ? $p['CODE'] : 'PROPERTY_' . $p['ID'];
+        $arProductIdProperties[$code] = $p['NAME'] . ' [' . $code . ']';
+    }
+}
+
 function getYastoreCheckoutButtonCssDefault()
 {
     return "#yastore-checkout-button {\n"
@@ -90,7 +110,7 @@ $aTabs = array(
             array('__group_product_id', 'Идентификатор товара'),
             array('YAKIT_PRODUCT_ID_FIELD', 'Поле идентификатора товара', 'ID', array('select', $arProductIdFields)),
             array('YAKIT_PRODUCT_IBLOCK_ID', 'Инфоблок товаров', '', array('select', $arProductIBlocks)),
-            array('YAKIT_PRODUCT_ID_PROPERTY', 'Код свойства (если поле = «Свойство инфоблока»)', '', array('text', 50)),
+            array('YAKIT_PRODUCT_ID_PROPERTY', 'Код свойства (если поле = «Свойство инфоблока»)', '', array('select', $arProductIdProperties)),
             array('__group_sell', 'Продажи'),
             array('SELL_WITHOUT_STOCK_CHECK', 'Продавать все активные товары (не проверять наличие остатков)', 'N', array('checkbox')),
             array('DEFAULT_PRODUCT_QUANTITY', 'Количество товара по умолчанию (шт)', '1', array('text', 5)),
@@ -145,6 +165,29 @@ if ($request->isPost() && check_bitrix_sessid() && $request->getPost('generate_t
     Option::set($module_id, 'JWT_TOKEN', $newToken);
     LocalRedirect($APPLICATION->GetCurPage() . '?mid=' . urlencode($module_id) . '&lang=' . LANGUAGE_ID . '&token_generated=Y');
     $tokenGenerated = true;
+}
+
+// Получение свойств инфоблока товаров для поля «Код свойства» (AJAX)
+if ($request->isPost() && check_bitrix_sessid() && $request->getPost('get_product_id_properties')) {
+    header('Content-Type: application/json');
+    $iblockId = (int)$request->getPost('iblock_id');
+    if ($iblockId <= 0) {
+        echo json_encode(array('success' => false, 'error' => 'Не указан ID инфоблока'));
+        exit;
+    }
+    $properties = array();
+    if (\Bitrix\Main\Loader::includeModule('iblock')) {
+        $propRes = \CIBlockProperty::GetList(
+            array('SORT' => 'ASC', 'NAME' => 'ASC'),
+            array('IBLOCK_ID' => $iblockId, 'ACTIVE' => 'Y')
+        );
+        while ($p = $propRes->GetNext()) {
+            $code = !empty($p['CODE']) ? $p['CODE'] : 'PROPERTY_' . $p['ID'];
+            $properties[$code] = $p['NAME'] . ' [' . $code . ']';
+        }
+    }
+    echo json_encode(array('success' => true, 'properties' => $properties));
+    exit;
 }
 
 // Получение свойств инфоблока торговых предложений (AJAX запрос)
@@ -598,6 +641,7 @@ tbody.formgroup tr:first-child td {
                 <? if ($arOption[0] == 'SKU_IBLOCK_ID'): ?>id='sku_iblock_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' ? '' : 'none') ?>;'<? endif; ?>
                 <? if ($arOption[0] == 'SKU_PROPERTIES'): ?>id='sku_properties_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' && !empty(Option::get($module_id, 'SKU_IBLOCK_ID', '')) ? '' : 'none') ?>;'<? endif; ?>
                 <? if ($arOption[0] == 'SKU_COLOR_PROPERTY'): ?>id='sku_color_property_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' && !empty(Option::get($module_id, 'SKU_IBLOCK_ID', '')) ? '' : 'none') ?>;'<? endif; ?>
+                <? if ($arOption[0] == 'YAKIT_PRODUCT_ID_PROPERTY'): ?>id='yakit_product_id_property_row' style='display: <?= (Option::get($module_id, 'YAKIT_PRODUCT_ID_FIELD', 'ID') === 'PROPERTY' ? '' : 'none') ?>;'<? endif; ?>
                 <? if ($arOption[0] == 'DEFAULT_PRODUCT_QUANTITY'): ?>id='default_quantity_row'<? endif; ?>>
                 <td width='40%' style='white-space: nowrap;'>
                     <?= htmlspecialcharsbx($arOption[1]); ?>
@@ -653,8 +697,17 @@ tbody.formgroup tr:first-child td {
                             <? endif; ?>
                             <? if ($arOption[0] == 'SKU_IBLOCK_ID'): ?>
                                 id='sku_iblock_select' onchange='loadSkuProperties()'
+                            <? endif; ?>
+                            <? if ($arOption[0] == 'YAKIT_PRODUCT_IBLOCK_ID'): ?>
+                                id='yakit_product_iblock_select' onchange='loadProductIdProperties()'
+                            <? endif; ?>
+                            <? if ($arOption[0] == 'YAKIT_PRODUCT_ID_FIELD'): ?>
+                                id='yakit_product_id_field_select' onchange='toggleProductIdPropertyRow(this)'
+                            <? endif; ?>
+                            <? if ($arOption[0] == 'YAKIT_PRODUCT_ID_PROPERTY'): ?>
+                                id='yakit_product_id_property_select' style='min-width: 280px;'
                             <? endif; ?>>
-                            <? if ($arOption[0] !== 'YAKIT_PRODUCT_ID_FIELD'): ?>
+                            <? if ($arOption[0] !== 'YAKIT_PRODUCT_ID_FIELD' && $arOption[0] !== 'YAKIT_PRODUCT_ID_PROPERTY'): ?>
                             <option value=''>-- Выберите --</option>
                             <? endif; ?>
                             <? foreach ($arOption[3][1] as $optValue => $optName): ?>
@@ -895,6 +948,55 @@ tbody.formgroup tr:first-child td {
         }
     }
     
+    function toggleProductIdPropertyRow(selectEl) {
+        var row = document.getElementById('yakit_product_id_property_row');
+        if (row && selectEl) {
+            row.style.display = (selectEl.value === 'PROPERTY') ? '' : 'none';
+            if (selectEl.value === 'PROPERTY') loadProductIdProperties();
+        }
+    }
+    
+    function loadProductIdProperties() {
+        var iblockSelect = document.getElementById('yakit_product_iblock_select');
+        var propertySelect = document.getElementById('yakit_product_id_property_select');
+        if (!iblockSelect || !propertySelect) return;
+        var iblockId = iblockSelect.value;
+        var savedValue = '<?= CUtil::JSEscape(Option::get($module_id, 'YAKIT_PRODUCT_ID_PROPERTY', '')) ?>';
+        var valueToRestore = propertySelect.value || savedValue;
+        propertySelect.innerHTML = '<option value="">— Не выбрано —</option>';
+        if (!iblockId) {
+            propertySelect.disabled = false;
+            return;
+        }
+        propertySelect.disabled = true;
+        var formData = new FormData();
+        formData.append('get_product_id_properties', 'Y');
+        formData.append('iblock_id', iblockId);
+        formData.append('sessid', '<?= bitrix_sessid() ?>');
+        fetch('<?= $APPLICATION->GetCurPage() ?>?mid=<?= urlencode($module_id) ?>&lang=<?= LANGUAGE_ID ?>', {
+            method: 'POST',
+            body: formData
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            propertySelect.innerHTML = '<option value="">— Не выбрано —</option>';
+            if (data.success && data.properties) {
+                for (var code in data.properties) {
+                    var opt = document.createElement('option');
+                    opt.value = code;
+                    opt.textContent = data.properties[code];
+                    if (valueToRestore && code === valueToRestore) opt.selected = true;
+                    propertySelect.appendChild(opt);
+                }
+            }
+            propertySelect.disabled = false;
+        })
+        .catch(function() {
+            propertySelect.innerHTML = '<option value="">Ошибка загрузки</option>';
+            propertySelect.disabled = false;
+        });
+    }
+    
     function loadColorPropertyValues(propertyId) {
         var tbody = document.getElementById('sku_color_map_tbody');
         var iblockSelect = document.getElementById('sku_iblock_select');
@@ -1097,6 +1199,8 @@ tbody.formgroup tr:first-child td {
             toggleAutoCompleteStatus();
             toggleSkuSettings();
             toggleDefaultQuantityField();
+            var productIdFieldSelect = document.getElementById('yakit_product_id_field_select');
+            if (productIdFieldSelect) toggleProductIdPropertyRow(productIdFieldSelect);
             // Загружаем свойства, если инфоблок уже выбран
             var iblockSelect = document.getElementById('sku_iblock_select');
             if (iblockSelect && iblockSelect.value) {
@@ -1108,6 +1212,8 @@ tbody.formgroup tr:first-child td {
         toggleAutoCompleteStatus();
         toggleSkuSettings();
         toggleDefaultQuantityField();
+        var productIdFieldSelect = document.getElementById('yakit_product_id_field_select');
+        if (productIdFieldSelect) toggleProductIdPropertyRow(productIdFieldSelect);
         // Загружаем свойства, если инфоблок уже выбран
         var iblockSelect = document.getElementById('sku_iblock_select');
         if (iblockSelect && iblockSelect.value) {
