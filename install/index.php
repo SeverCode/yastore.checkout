@@ -6,7 +6,7 @@ class yastore_checkout extends CModule
 {
     var $MODULE_ID = "yastore.checkout";
     var $MODULE_NAME = "Экспресс-чекаут Яндекс KIT";
-    var $MODULE_VERSION = "0.0.22";
+    var $MODULE_VERSION = "0.0.23";
     var $MODULE_VERSION_DATE = "2026-03-12";
     var $MODULE_DESCRIPTION = "Экспресс-чекаут Яндекс KIT";
     var $PARTNER_NAME = "Яндекс";
