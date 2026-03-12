@@ -5,6 +5,7 @@ use Bitrix\Main\Loader;
 use Bitrix\Main\Web\Json;
 use Bitrix\Main\Config\Option;
 use Yastore\Checkout\ColorMapHelper;
+use Yastore\Checkout\ProductIdResolver;
 use Bitrix\Iblock\ElementTable;
 use Bitrix\Catalog\ProductTable;
 use Bitrix\Catalog\StoreProductTable;
@@ -35,27 +36,38 @@ class CheckBasketHandler extends BaseHandler
 
             $responseItems = [];
             $notFoundItems = [];
+            $notFoundDebug = null;
 
             foreach ($requestData['items'] as $requestItem) {
-                if (empty($requestItem['id']) || empty($requestItem['quantity'])) {
+                if (empty($requestItem['id'])) {
+                    continue;
+                }
+                $requestedQuantity = isset($requestItem['quantity']) && (string) $requestItem['quantity'] !== '' ? intval($requestItem['quantity']) : 1;
+                if ($requestedQuantity < 1) {
+                    $requestedQuantity = 1;
+                }
+
+                $externalId = $requestItem['id'];
+
+                $productId = ProductIdResolver::resolveToInternalId($externalId);
+                if ($productId === null) {
+                    $notFoundItems[] = $externalId;
+                    if ($notFoundDebug === null) {
+                        $notFoundDebug = ProductIdResolver::getLastDebug();
+                    }
                     continue;
                 }
 
-                $sku = $requestItem['id'];
-                $requestedQuantity = intval($requestItem['quantity']);
-
                 $element = ElementTable::getList([
-                    'filter' => ['ID' => $sku, 'ACTIVE' => 'Y'],
+                    'filter' => ['ID' => $productId, 'ACTIVE' => 'Y'],
                     'select' => ['ID', 'IBLOCK_ID', 'NAME', 'DETAIL_PICTURE', 'PREVIEW_PICTURE'],
                     'limit' => 1
                 ])->fetch();
 
                 if (!$element) {
-                    $notFoundItems[] = $sku;
+                    $notFoundItems[] = $externalId;
                     continue;
                 }
-
-                $productId = $element['ID'];
 
                 $product = ProductTable::getList([
                     'filter' => ['ID' => $productId],
@@ -67,7 +79,7 @@ class CheckBasketHandler extends BaseHandler
                 $imageUrl = $this->getProductImage($element);
                 $productUrl = $this->getProductUrl($element);
                 $responseItem = [
-                    'id' => $sku,
+                    'id' => ProductIdResolver::getExternalId($productId),
                     'name' => $element['NAME'],
                     'regular_price' => $priceData['regular_price'],
                     'final_price' => $priceData['final_price'],
@@ -112,7 +124,14 @@ class CheckBasketHandler extends BaseHandler
             }
 
             if (!empty($notFoundItems)) {
-                $this->sendError('Products not found: ' . implode(', ', $notFoundItems), 404);
+                $msg = 'Products not found: ' . implode(', ', $notFoundItems);
+                if ($this->request->get('debug') === '1' || $this->request->getHeader('X-Debug') === '1') {
+                    $this->sendErrorWithData($msg, 404, self::ERROR_NOT_FOUND, [
+                        'debug' => $notFoundDebug !== null ? $notFoundDebug : ProductIdResolver::getLastDebug(),
+                    ]);
+                } else {
+                    $this->sendError($msg, 404);
+                }
                 return;
             }
 
@@ -155,6 +174,23 @@ class CheckBasketHandler extends BaseHandler
         $warehouses = [];
         $isStoreControl = $this->isStoreControlEnabled();
 
+        // Опция «Продавать все активные товары» — не проверять остатки; available_quantity из настройки «Количество товара по умолчанию»
+        $sellWithoutStockCheck = Option::get('yastore.checkout', 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y';
+        if ($sellWithoutStockCheck) {
+            $availableQty = max(1, (int) Option::get('yastore.checkout', 'DEFAULT_PRODUCT_QUANTITY', '1'));
+            $firstWarehouse = StoreTable::getList([
+                'filter' => ['ACTIVE' => 'Y'],
+                'select' => ['ID'],
+                'order' => ['SORT' => 'ASC', 'ID' => 'ASC'],
+                'limit' => 1
+            ])->fetch();
+            if ($firstWarehouse) {
+                return [['id' => (string) $firstWarehouse['ID'], 'available_quantity' => $availableQty]];
+            }
+            $virtualWarehouse = $this->getVirtualWarehouse();
+            return [['id' => $virtualWarehouse['id'], 'available_quantity' => $availableQty]];
+        }
+
         // Получаем общий остаток товара
         $product = ProductTable::getList([
             'filter' => ['ID' => $productId],
@@ -170,9 +206,40 @@ class CheckBasketHandler extends BaseHandler
         
         // Проверяем наличие остатков по складам
         $hasStock = $this->hasWarehouseStock($productId);
-
-        // Если складской учёт выключен — всегда тот же id, что и в GET warehouses (первый активный склад)
+        
+        // При выключенном складском учёте сначала смотрим остатки по складам; если есть — отдаём их.
         if (!$isStoreControl) {
+            $filterStore = ['PRODUCT_ID' => $productId];
+            if ($warehouseId !== null) {
+                $store = \Bitrix\Catalog\StoreTable::getList([
+                    'filter' => ['ID' => $warehouseId],
+                    'select' => ['ID'],
+                    'limit' => 1
+                ])->fetch();
+                if (!$store) {
+                    return [];
+                }
+                $filterStore['STORE_ID'] = $store['ID'];
+            }
+            $storeProducts = StoreProductTable::getList([
+                'filter' => $filterStore,
+                'select' => ['STORE_ID', 'AMOUNT', 'QUANTITY_RESERVED'],
+            ]);
+            $byStore = [];
+            while ($row = $storeProducts->fetch()) {
+                $store = \Bitrix\Catalog\StoreTable::getById($row['STORE_ID'])->fetch();
+                if ($store && $store['ACTIVE'] === 'Y') {
+                    $byStore[(string)$store['ID']] = (float)$row['AMOUNT'];
+                }
+            }
+            if (!empty($byStore)) {
+                $out = [];
+                foreach ($byStore as $sid => $amount) {
+                    $out[] = ['id' => $sid, 'available_quantity' => $amount];
+                }
+                return $out;
+            }
+            // Нет остатков по складам — один склад с общим остатком (ProductTable.QUANTITY)
             $firstWarehouse = StoreTable::getList([
                 'filter' => ['ACTIVE' => 'Y'],
                 'select' => ['ID'],

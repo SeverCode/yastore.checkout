@@ -4,6 +4,7 @@ namespace Yastore\Checkout\Handlers;
 use Bitrix\Main\Loader;
 use Bitrix\Main\Web\Json;
 use Bitrix\Main\Config\Option;
+use Yastore\Checkout\ProductIdResolver;
 use Bitrix\Main\Context;
 use Bitrix\Sale\Order;
 use Bitrix\Sale\Basket;
@@ -155,14 +156,21 @@ class OrdersHandler extends BaseHandler
             $basket = Basket::create($siteId);
             
             foreach ($items as $item) {
-                $productId = intval($item['id']);
-                $quantity = intval($item['quantity']);
+                $productId = ProductIdResolver::resolveToInternalId($item['id']);
+                if ($productId === null) {
+                    $this->sendError('Product not found: ' . $item['id'], 404, self::ERROR_PRODUCT_NOT_FOUND);
+                    return;
+                }
+                $quantity = isset($item['quantity']) && (string) $item['quantity'] !== '' ? intval($item['quantity']) : 1;
+                if ($quantity < 1) {
+                    $quantity = 1;
+                }
                 $price = floatval($item['final_price']);
 
                 // Получаем информацию о товаре
                 $product = \Bitrix\Iblock\ElementTable::getById($productId)->fetch();
                 if (!$product) {
-                    $this->sendError('Product not found: ' . $productId, 404, self::ERROR_PRODUCT_NOT_FOUND);
+                    $this->sendError('Product not found: ' . $item['id'], 404, self::ERROR_PRODUCT_NOT_FOUND);
                     return;
                 }
 
@@ -633,10 +641,14 @@ class OrdersHandler extends BaseHandler
                 }
             }
 
-            // Создаем карту товаров из запроса (ID => quantity)
+            // Создаем карту товаров из запроса (внутренний ID => quantity)
             $purchasedItemsMap = [];
             foreach ($requestData['purchased_items'] as $purchasedItem) {
-                $purchasedItemsMap[$purchasedItem['id']] = intval($purchasedItem['quantity']);
+                $internalId = ProductIdResolver::resolveToInternalId($purchasedItem['id']);
+                if ($internalId !== null) {
+                    $q = isset($purchasedItem['quantity']) && (string) $purchasedItem['quantity'] !== '' ? intval($purchasedItem['quantity']) : 1;
+                    $purchasedItemsMap[$internalId] = $q > 0 ? $q : 1;
+                }
             }
 
             // При запросе delivered товар уже отгружен - проверка остатков не требуется
@@ -729,15 +741,24 @@ class OrdersHandler extends BaseHandler
                 }
             }
 
-            // Получаем отгрузки
+            // Получаем отгрузки и склад заказа (для складского учёта при списании)
             $shipmentCollection = $order->getShipmentCollection();
-            
+            $warehouseId = (int)$order->getField('STORE_ID');
+            if ($warehouseId <= 0) {
+                $warehouseId = (int)$this->getOrderPropertyValue($order, 'STORE_ID');
+            }
+            $isStoreControl = $this->isStoreControlEnabled();
+
             // Отмечаем отгрузки как доставленные
             foreach ($shipmentCollection as $shipment) {
                 if ($shipment->isSystem()) {
                     continue;
                 }
-                
+
+                if ($isStoreControl && $warehouseId > 0) {
+                    $shipment->setStoreId($warehouseId);
+                }
+
                 // Устанавливаем признак отгрузки
                 $shipment->setField('DEDUCTED', 'Y');
                 
@@ -774,6 +795,13 @@ class OrdersHandler extends BaseHandler
                         $shipmentItem = $shipmentItemCollection->createItem($basketItem);
                         if ($shipmentItem) {
                             $shipmentItem->setQuantity($basketItem->getQuantity());
+                            // При включённом складском учёте задаём склад для списания (как при создании заказа)
+                            if ($isStoreControl && $warehouseId > 0 && method_exists($shipmentItem, 'getShipmentItemStoreCollection')) {
+                                $shipmentItemStoreCollection = $shipmentItem->getShipmentItemStoreCollection();
+                                $storeItem = $shipmentItemStoreCollection->createItem($basketItem);
+                                $storeItem->setField('STORE_ID', $warehouseId);
+                                $storeItem->setField('QUANTITY', (float)$basketItem->getQuantity());
+                            }
                         }
                     }
                 }
@@ -852,18 +880,27 @@ class OrdersHandler extends BaseHandler
 
 
     /**
-     * Проверить конфликты наличия и цен товаров
+     * Проверить конфликты наличия и цен товаров.
+     * Количественный учёт (quantity_trace) — проверять ли наличие по количеству.
+     * Складской учёт (store_control) — откуда брать остаток: общий (ProductTable) или по складу (StoreProductTable).
      */
     private function checkInventoryConflicts($items, $warehouseId)
     {
         $conflicts = [];
+        $quantityTraceEnabled = Option::get('catalog', 'default_quantity_trace', 'N') === 'Y';
         $isStoreControl = Configuration::useStoreControl();
 
-        // Если складской учёт выключен - работаем с общим количеством минус резервы
+        // Складской учёт выключен — остаток берём общий (ProductTable.QUANTITY)
         if (!$isStoreControl) {
             foreach ($items as $item) {
-                $productId = intval($item['id']);
-                $requestedQuantity = intval($item['quantity']);
+                $productId = ProductIdResolver::resolveToInternalId($item['id']);
+                if ($productId === null) {
+                    continue;
+                }
+                $requestedQuantity = isset($item['quantity']) && (string) $item['quantity'] !== '' ? intval($item['quantity']) : 1;
+                if ($requestedQuantity < 1) {
+                    $requestedQuantity = 1;
+                }
                 $requestedRegularPrice = floatval($item['price']);
                 $requestedFinalPrice = floatval($item['final_price']);
 
@@ -896,10 +933,10 @@ class OrdersHandler extends BaseHandler
                     $currentFinalPrice = floatval($optimalPrice['RESULT_PRICE']['DISCOUNT_PRICE']);
                 }
 
-                // Проверяем конфликты (количество, базовая цена, финальная цена)
+                // Проверяем конфликты: по количеству — только при включённом количественном учёте
                 $hasConflict = false;
-                
-                if ($availableQuantity < $requestedQuantity) {
+                $sellWithoutStockCheck = Option::get('yastore.checkout', 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y';
+                if ($quantityTraceEnabled && !$sellWithoutStockCheck && $availableQuantity < $requestedQuantity) {
                     $hasConflict = true;
                 }
                 
@@ -937,7 +974,7 @@ class OrdersHandler extends BaseHandler
                     }
                     
                     $conflicts[] = [
-                        'id' => (string)$productId,
+                        'id' => ProductIdResolver::getExternalId($productId),
                         'warehouses' => [
                             [
                                 'id' => $warehouseIdForResponse,
@@ -968,8 +1005,10 @@ class OrdersHandler extends BaseHandler
         if (!$store) {
             // Если склад не найден - проверяем каждый товар на наличие общего остатка
             foreach ($items as $item) {
-                $productId = intval($item['id']);
-                
+                $productId = ProductIdResolver::resolveToInternalId($item['id']);
+                if ($productId === null) {
+                    continue;
+                }
                 // Получаем общий остаток товара
                 $product = ProductTable::getList([
                     'filter' => ['ID' => $productId],
@@ -988,7 +1027,7 @@ class OrdersHandler extends BaseHandler
                 if ($availableQuantity > 0 && (!$hasWarehouses || !$hasStock)) {
                     $virtualWarehouse = $this->getVirtualWarehouse();
                     $conflicts[] = [
-                        'id' => (string)$productId,
+                        'id' => ProductIdResolver::getExternalId($productId),
                         'warehouses' => [
                             [
                                 'id' => $virtualWarehouse['id'],
@@ -1000,7 +1039,7 @@ class OrdersHandler extends BaseHandler
                     ];
                 } else {
                     $conflicts[] = [
-                        'id' => (string)$productId,
+                        'id' => ProductIdResolver::getExternalId($productId),
                         'warehouses' => []
                     ];
                 }
@@ -1012,8 +1051,14 @@ class OrdersHandler extends BaseHandler
         $storeXmlId = (string) $store['ID'];
 
         foreach ($items as $item) {
-            $productId = intval($item['id']);
-            $requestedQuantity = intval($item['quantity']);
+            $productId = ProductIdResolver::resolveToInternalId($item['id']);
+            if ($productId === null) {
+                continue;
+            }
+            $requestedQuantity = isset($item['quantity']) && (string) $item['quantity'] !== '' ? intval($item['quantity']) : 1;
+            if ($requestedQuantity < 1) {
+                $requestedQuantity = 1;
+            }
             $requestedRegularPrice = floatval($item['price']);
             $requestedFinalPrice = floatval($item['final_price']);
 
@@ -1070,10 +1115,10 @@ class OrdersHandler extends BaseHandler
                 $currentFinalPrice = floatval($optimalPrice['RESULT_PRICE']['DISCOUNT_PRICE']);
             }
 
-            // Проверяем конфликты (количество, базовая цена, финальная цена)
+            // Проверяем конфликты: по количеству — только при включённом количественном учёте
             $hasConflict = false;
-            
-            if ($availableQuantity < $requestedQuantity) {
+            $sellWithoutStockCheck = Option::get('yastore.checkout', 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y';
+            if ($quantityTraceEnabled && !$sellWithoutStockCheck && $availableQuantity < $requestedQuantity) {
                 $hasConflict = true;
             }
             
@@ -1088,7 +1133,7 @@ class OrdersHandler extends BaseHandler
 
             if ($hasConflict) {
                 $conflicts[] = [
-                    'id' => (string)$productId,
+                    'id' => ProductIdResolver::getExternalId($productId),
                     'warehouses' => [
                         [
                             'id' => $storeXmlId,

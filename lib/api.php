@@ -42,6 +42,10 @@ class Api
                 return;
             }
 
+            if ($method === 'orders' && $this->request->getRequestMethod() === 'POST' && empty($action)) {
+                ignore_user_abort(true);
+            }
+
             $handler->handle($orderId);
 
         } catch (\Exception $e) {

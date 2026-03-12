@@ -3,7 +3,6 @@ namespace Yastore\Checkout\Handlers;
 
 use Bitrix\Main\Loader;
 use Bitrix\Catalog\StoreTable;
-use Bitrix\Sale\Configuration;
 
 class WarehousesHandler extends BaseHandler
 {
@@ -14,14 +13,6 @@ class WarehousesHandler extends BaseHandler
                 $this->sendError('Catalog module not available', 500);
                 return;
             }
-
-            // Подключаем модуль sale для проверки складского учета
-            if (!Loader::includeModule('sale')) {
-                $this->sendError('Sale module not available', 500);
-                return;
-            }
-
-            $isStoreControl = $this->isStoreControlEnabled();
 
             // Получаем склады из базы данных
             $warehouses = StoreTable::getList([
@@ -45,12 +36,8 @@ class WarehousesHandler extends BaseHandler
                     'xml_id' => $virtualWarehouse['id'],
                     'active' => 'Y'
                 ];
-            } else {
-                // При выключенном складском учете возвращаем только первый склад
-                if (!$isStoreControl) {
-                    $warehousesList = [reset($warehousesList)];
-                }
             }
+            // Всегда отдаём все активные склады — для выбора точек выдачи (ПВЗ) нужен полный список
 
             $this->sendResponse([
                 'warehouses' => $warehousesList

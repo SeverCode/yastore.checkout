@@ -34,10 +34,7 @@ if (!$isValidToken) {
     header('Content-Type: application/json; charset=utf-8');
     \CHTTP::setStatus("404 Not Found");
     echo \Bitrix\Main\Web\Json::encode([
-        'error' => [
-            'message' => 'Invalid or missing token. Received: ' . $tokenForResponse,
-            'code' => 'UNAUTHORIZED'
-        ]
+        'error' => 'Invalid or missing token. Received: ' . $tokenForResponse
     ]);
     die();
 }

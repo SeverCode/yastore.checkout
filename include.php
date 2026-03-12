@@ -9,4 +9,5 @@
     '\Yastore\Checkout\Handlers\OrdersHandler' => 'lib/handlers/OrdersHandler.php',
     '\Yastore\Checkout\Handlers\SettingsHandler' => 'lib/handlers/SettingsHandler.php',
     '\Yastore\Checkout\Delivery\YandexKitDelivery' => 'lib/delivery/yandexkitdelivery.php',
+    '\Yastore\Checkout\ProductIdResolver' => 'lib/ProductIdResolver.php',
 ]);

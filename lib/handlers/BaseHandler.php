@@ -35,62 +35,30 @@ abstract class BaseHandler
     }
 
     /**
-     * Отправка ошибки в стандартном формате: error.message + error.code
+     * Отправка ошибки в формате: {"error": "текст ошибки"}
      * @param string $message Текст ошибки
      * @param int $httpCode HTTP-код (400, 401, 404, 409, 500)
-     * @param string|null $code Код ошибки (ErrorCode); если null — выводится по умолчанию из $httpCode
+     * @param string|null $code Не используется (оставлен для совместимости вызовов)
      */
     protected function sendError($message, $httpCode = 500, $code = null)
     {
-        if ($code === null) {
-            $code = $this->getDefaultErrorCodeForHttpStatus($httpCode);
-        }
         http_response_code($httpCode);
-        echo Json::encode([
-            'error' => [
-                'message' => $message,
-                'code' => $code
-            ]
-        ]);
+        echo Json::encode(['error' => $message]);
     }
 
     /**
-     * Отправка ошибки с дополнительными полями в теле (например actual_inventory)
+     * Отправка ошибки с дополнительными полями в теле (например debug, actual_inventory).
+     * Формат: {"error": "текст ошибки", ...extra}
      * @param string $message Текст ошибки
      * @param int $httpCode HTTP-код
-     * @param string|null $code Код ошибки
-     * @param array $extra Ключи и значения, добавляемые в корень JSON (например ['actual_inventory' => $data])
+     * @param string|null $code Не используется (оставлен для совместимости вызовов)
+     * @param array $extra Ключи и значения, добавляемые в корень JSON
      */
     protected function sendErrorWithData($message, $httpCode = 500, $code = null, array $extra = [])
     {
-        if ($code === null) {
-            $code = $this->getDefaultErrorCodeForHttpStatus($httpCode);
-        }
         http_response_code($httpCode);
-        $body = array_merge(
-            [
-                'error' => [
-                    'message' => $message,
-                    'code' => $code
-                ]
-            ],
-            $extra
-        );
+        $body = array_merge(['error' => $message], $extra);
         echo Json::encode($body);
-    }
-
-    /**
-     * Код ошибки по умолчанию для HTTP-статуса
-     */
-    private function getDefaultErrorCodeForHttpStatus($httpCode)
-    {
-        $map = [
-            400 => self::ERROR_INVALID_INPUT,
-            401 => self::ERROR_UNAUTHORIZED,
-            404 => self::ERROR_NOT_FOUND,
-            409 => self::ERROR_CONFLICT,
-        ];
-        return $map[(int)$httpCode] ?? self::ERROR_INTERNAL;
     }
 
     /**
@@ -149,6 +117,7 @@ abstract class BaseHandler
     }
 
     /**
+    
      * Проверяет, включен ли складской учет
      * Совместимость с Bitrix 18.5 и новыми версиями
      * @return bool

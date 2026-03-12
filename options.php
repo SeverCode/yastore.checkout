@@ -20,19 +20,34 @@ if (\Bitrix\Main\Loader::includeModule('sale')) {
 
 // Получаем список инфоблоков торговых предложений
 $arSkuIBlocks = array();
+$arProductIBlocks = array(); // инфоблоки товаров и ТП для выбора "по какому искать"
 if (\Bitrix\Main\Loader::includeModule('catalog') && \Bitrix\Main\Loader::includeModule('iblock')) {
     $catalogIterator = \Bitrix\Catalog\CatalogIblockTable::getList(array(
         'select' => array('IBLOCK_ID', 'PRODUCT_IBLOCK_ID'),
-        'filter' => array('>PRODUCT_IBLOCK_ID' => 0) // Инфоблоки торговых предложений
+        'filter' => array('>PRODUCT_IBLOCK_ID' => 0)
     ));
     while ($catalog = $catalogIterator->fetch()) {
         $iblockId = (int)$catalog['IBLOCK_ID'];
+        $productIblockId = (int)$catalog['PRODUCT_IBLOCK_ID'];
         $iblock = \CIBlock::GetByID($iblockId)->Fetch();
         if ($iblock) {
             $arSkuIBlocks[$iblockId] = '[' . $iblock['IBLOCK_TYPE_ID'] . '] ' . $iblock['NAME'];
+            $arProductIBlocks[$iblockId] = $arSkuIBlocks[$iblockId];
+        }
+        if ($productIblockId > 0 && !isset($arProductIBlocks[$productIblockId])) {
+            $pIblock = \CIBlock::GetByID($productIblockId)->Fetch();
+            if ($pIblock) {
+                $arProductIBlocks[$productIblockId] = '[' . $pIblock['IBLOCK_TYPE_ID'] . '] ' . $pIblock['NAME'];
+            }
         }
     }
 }
+$arProductIdFields = array(
+    'ID' => 'ID',
+    'XML_ID' => 'XML_ID',
+    'CODE' => 'CODE',
+    'PROPERTY' => 'Свойство инфоблока',
+);
 
 function getYastoreCheckoutButtonCssDefault()
 {
@@ -67,10 +82,18 @@ function getYastoreCheckoutButtonCssDefault()
 $aTabs = array(
     array(
         'DIV' => 'edit1',
-        'TAB' => 'Доступ к Яндекс KIT',
+        'TAB' => 'Основные настройки',
         'OPTIONS' => array(
+            array('__group_dostup', 'Доступ к Яндекс KIT'),
             array('JWT_TOKEN', 'Токен доступа', '', array('text', 100)),
             array('YANDEX_KIT_CREDENTIALS', 'Токен API Яндекс KIT', '', array('text', 100)),
+            array('__group_product_id', 'Идентификатор товара'),
+            array('YAKIT_PRODUCT_ID_FIELD', 'Поле идентификатора товара', 'ID', array('select', $arProductIdFields)),
+            array('YAKIT_PRODUCT_IBLOCK_ID', 'Инфоблок товаров', '', array('select', $arProductIBlocks)),
+            array('YAKIT_PRODUCT_ID_PROPERTY', 'Код свойства (если поле = «Свойство инфоблока»)', '', array('text', 50)),
+            array('__group_sell', 'Продажи'),
+            array('SELL_WITHOUT_STOCK_CHECK', 'Продавать все активные товары (не проверять наличие остатков)', 'N', array('checkbox')),
+            array('DEFAULT_PRODUCT_QUANTITY', 'Количество товара по умолчанию (шт)', '1', array('text', 5)),
         )
     ),
     array(
@@ -380,6 +403,8 @@ if ($request->isPost() && check_bitrix_sessid() && !$tokenGenerated) {
         foreach ($aTab['OPTIONS'] as $arOption) {
             if (!is_array($arOption))
                 continue;
+            if (isset($arOption[0]) && strpos((string)$arOption[0], '__') === 0)
+                continue;
 
             $optionName = $arOption[0];
             // Для checkbox: если не отмечен, значение не приходит в POST, сохраняем 'N'
@@ -395,6 +420,9 @@ if ($request->isPost() && check_bitrix_sessid() && !$tokenGenerated) {
                 }
             } else {
                 $value = $request->getPost($optionName);
+            }
+            if ($optionName === 'YAKIT_PRODUCT_ID_FIELD' && (string)$value === '') {
+                $value = Option::get($module_id, 'YAKIT_PRODUCT_ID_FIELD', 'ID');
             }
             
             // Специальная обработка для YANDEX_KIT_CREDENTIALS - разбиваем и сохраняем в два поля
@@ -417,6 +445,14 @@ if ($request->isPost() && check_bitrix_sessid() && !$tokenGenerated) {
                 if ($optionName == 'YAKIT_BUTTON_CSS' && trim((string) $value) === '') {
                     $value = getYastoreCheckoutButtonCssDefault();
                 }
+                if ($optionName == 'DEFAULT_PRODUCT_QUANTITY') {
+                    $sellWithoutStock = $request->getPost('SELL_WITHOUT_STOCK_CHECK') === 'Y';
+                    if (!$sellWithoutStock) {
+                        continue; // поле неактивно — не перезаписываем
+                    }
+                    $q = max(1, (int) $value);
+                    $value = (string) $q;
+                }
                 Option::set($module_id, $optionName, (string) $value);
             }
         }
@@ -428,6 +464,15 @@ if ($request->isPost() && check_bitrix_sessid() && !$tokenGenerated) {
         Option::set($module_id, 'SKU_COLOR_MAP', $colorMapJson);
     } else {
         Option::set($module_id, 'SKU_COLOR_MAP', '');
+    }
+    // Принудительная очистка кэша опций, чтобы API сразу видел новые значения (в т.ч. YAKIT_PRODUCT_ID_FIELD)
+    if (class_exists('\Bitrix\Main\Application', true)) {
+        try {
+            $cache = \Bitrix\Main\Application::getInstance()->getManagedCache();
+            $cache->clean('b_option:' . $module_id, 'b_option');
+        } catch (\Exception $e) {
+            // игнорируем ошибки кэша
+        }
     }
 }
 
@@ -454,6 +499,26 @@ if (!empty($savedJwtToken) && !empty($savedCredentials)) {
 $tabControl = new CAdminTabControl('tabControl', $aTabs);
 ?>
 <style>
+tbody.formgroup {
+    border-top: 2px solid #e0e0e0;
+    background: #fafafa;
+}
+tbody.formgroup:first-of-type {
+    border-top: none;
+}
+tbody.formgroup tr:first-child td {
+    padding-top: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e8e8e8;
+    font-size: 13px;
+}
+/* Таблица соответствия цветов на вкладке «Торговые предложения» — выравнивание по колонке с селектами (40% = ширина колонки подписей) */
+#sku_color_map_row td {
+    padding-left: 40%;
+    vertical-align: top;
+}
+#edit1 input.yastore-main-option-input,
+#edit1 select.yastore-main-option-input,
 #edit4 input.yastore-btn-option-input,
 #edit4 textarea.yastore-btn-option-input {
     width: 400px;
@@ -471,9 +536,31 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
 
     <? foreach ($aTabs as $aTab): ?>
         <? $tabControl->BeginNextTab(); ?>
+        <?php $tbodyOpen = false; ?>
         <? foreach ($aTab['OPTIONS'] as $arOption):
             if (!is_array($arOption))
                 continue;
+            if (isset($arOption[0]) && strpos((string)$arOption[0], '__group') === 0): ?>
+            <?php
+            if ($tbodyOpen) { ?></tbody><?php $tbodyOpen = false; }
+            if ($aTab['DIV'] == 'edit1') {
+                // На первой вкладке — оформление подзаголовка как в Bitrix (tr.heading)
+                ?>
+            <tr class="heading">
+                <td colspan="2"><b><?= htmlspecialcharsbx($arOption[1]) ?></b></td>
+            </tr>
+            <?php
+            } else {
+                $tbodyOpen = true;
+                ?>
+            <tbody class="formgroup">
+            <tr>
+                <td width="40%" style="white-space: nowrap; padding-top: 16px; padding-bottom: 4px;"><strong><?= htmlspecialcharsbx($arOption[1]) ?></strong></td>
+                <td width="60%" style="padding-top: 16px; padding-bottom: 4px;"></td>
+            </tr>
+            <?php
+            }
+            continue; endif;
 
             // Специальная обработка для YANDEX_KIT_CREDENTIALS - объединяем значения из старых полей если новое пустое
             if ($arOption[0] == 'YANDEX_KIT_CREDENTIALS') {
@@ -510,7 +597,8 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                 <? if ($arOption[0] == 'AUTO_COMPLETE_STATUS'): ?>id='auto_complete_status_row' style='display: <?= (Option::get($module_id, 'AUTO_COMPLETE_ON_STATUS_CHANGE', 'N') == 'Y' ? '' : 'none') ?>;'<? endif; ?>
                 <? if ($arOption[0] == 'SKU_IBLOCK_ID'): ?>id='sku_iblock_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' ? '' : 'none') ?>;'<? endif; ?>
                 <? if ($arOption[0] == 'SKU_PROPERTIES'): ?>id='sku_properties_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' && !empty(Option::get($module_id, 'SKU_IBLOCK_ID', '')) ? '' : 'none') ?>;'<? endif; ?>
-                <? if ($arOption[0] == 'SKU_COLOR_PROPERTY'): ?>id='sku_color_property_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' && !empty(Option::get($module_id, 'SKU_IBLOCK_ID', '')) ? '' : 'none') ?>;'<? endif; ?>>
+                <? if ($arOption[0] == 'SKU_COLOR_PROPERTY'): ?>id='sku_color_property_row' style='display: <?= (Option::get($module_id, 'USE_SKU', 'N') == 'Y' && !empty(Option::get($module_id, 'SKU_IBLOCK_ID', '')) ? '' : 'none') ?>;'<? endif; ?>
+                <? if ($arOption[0] == 'DEFAULT_PRODUCT_QUANTITY'): ?>id='default_quantity_row'<? endif; ?>>
                 <td width='40%' style='white-space: nowrap;'>
                     <?= htmlspecialcharsbx($arOption[1]); ?>
                     <? if ($arOption[0] == 'USE_SKU'): ?>
@@ -535,13 +623,19 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                             <? endif; ?>
                             <? if ($arOption[0] == 'USE_SKU'): ?>
                                 id='use_sku_checkbox' onchange='toggleSkuSettings()'
+                            <? endif; ?>
+                            <? if ($arOption[0] == 'SELL_WITHOUT_STOCK_CHECK'): ?>
+                                id='sell_without_stock_checkbox' onchange='toggleDefaultQuantityField()'
                             <? endif; ?>>
                     <? endif; ?>
                     <? if ($arOption[3][0] == 'text'): ?>
                         <input type='text' name='<?= htmlspecialcharsbx($arOption[0]) ?>' value='<?= htmlspecialcharsbx($val) ?>'
-                            size='<?= htmlspecialcharsbx($arOption[3][1]) ?>' id='<?= htmlspecialcharsbx($arOption[0]) ?>'<? if ($aTab['DIV'] == 'edit4'): ?> class='yastore-btn-option-input'<? endif; ?>
+                            size='<?= htmlspecialcharsbx($arOption[3][1]) ?>' id='<?= htmlspecialcharsbx($arOption[0]) ?>'<? if ($aTab['DIV'] == 'edit4'): ?> class='yastore-btn-option-input'<? endif; ?><? if ($aTab['DIV'] == 'edit1'): ?> class='yastore-main-option-input'<? endif; ?>
                             <? if ($arOption[0] == 'YANDEX_KIT_CREDENTIALS'): ?>
                                 onchange='checkConnectionButtonState()' onkeyup='checkConnectionButtonState()'
+                            <? endif; ?>
+                            <? if ($arOption[0] == 'DEFAULT_PRODUCT_QUANTITY'): ?>
+                                <? if (Option::get($module_id, 'SELL_WITHOUT_STOCK_CHECK', 'N') !== 'Y'): ?> disabled<? endif; ?>
                             <? endif; ?>>
                     <? endif; ?>
                     <? if ($arOption[3][0] == 'textarea'): ?>
@@ -550,6 +644,7 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                     <? endif; ?>
                     <? if ($arOption[3][0] == 'select'): ?>
                         <select name='<?= htmlspecialcharsbx($arOption[0]) ?>'
+                            <? if ($aTab['DIV'] == 'edit1'): ?> class='yastore-main-option-input'<? endif; ?>
                             <? if ($arOption[0] == 'AUTO_CANCEL_STATUS'): ?>
                                 id='auto_cancel_status_select'
                             <? endif; ?>
@@ -559,9 +654,11 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
                             <? if ($arOption[0] == 'SKU_IBLOCK_ID'): ?>
                                 id='sku_iblock_select' onchange='loadSkuProperties()'
                             <? endif; ?>>
+                            <? if ($arOption[0] !== 'YAKIT_PRODUCT_ID_FIELD'): ?>
                             <option value=''>-- Выберите --</option>
+                            <? endif; ?>
                             <? foreach ($arOption[3][1] as $optValue => $optName): ?>
-                                <option value='<?= htmlspecialcharsbx($optValue) ?>' <?= ($val == $optValue ? 'selected' : '') ?>>
+                                <option value='<?= htmlspecialcharsbx($optValue) ?>' <?= ($val == $optValue || ($arOption[0] == 'YAKIT_PRODUCT_ID_FIELD' && (string)$val === '' && $optValue === 'ID') ? 'selected' : '') ?>>
                                     <?= htmlspecialcharsbx($optName) ?>
                                 </option>
                             <? endforeach; ?>
@@ -681,6 +778,7 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
             </tr>
             <? endif; ?>
         <? endforeach; ?>
+        <?php if ($tbodyOpen) { ?></tbody><?php } ?>
     <? endforeach; ?>
 
     <? $tabControl->Buttons(); ?>
@@ -689,6 +787,14 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
 </form>
 
 <script>
+    function toggleDefaultQuantityField() {
+        var checkbox = document.getElementById('sell_without_stock_checkbox');
+        var input = document.getElementById('DEFAULT_PRODUCT_QUANTITY');
+        if (checkbox && input) {
+            input.disabled = !checkbox.checked;
+        }
+    }
+
     function toggleAutoCancelStatus() {
         var checkbox = document.getElementById('auto_cancel_checkbox');
         var statusRow = document.getElementById('auto_cancel_status_row');
@@ -990,6 +1096,7 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
             toggleAutoCancelStatus();
             toggleAutoCompleteStatus();
             toggleSkuSettings();
+            toggleDefaultQuantityField();
             // Загружаем свойства, если инфоблок уже выбран
             var iblockSelect = document.getElementById('sku_iblock_select');
             if (iblockSelect && iblockSelect.value) {
@@ -1000,6 +1107,7 @@ $tabControl = new CAdminTabControl('tabControl', $aTabs);
         toggleAutoCancelStatus();
         toggleAutoCompleteStatus();
         toggleSkuSettings();
+        toggleDefaultQuantityField();
         // Загружаем свойства, если инфоблок уже выбран
         var iblockSelect = document.getElementById('sku_iblock_select');
         if (iblockSelect && iblockSelect.value) {

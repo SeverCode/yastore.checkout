@@ -9,6 +9,7 @@ use Bitrix\Main\Loader;
 use Bitrix\Sale;
 use Bitrix\Sale\Basket;
 use Bitrix\Sale\Order;
+use Yastore\Checkout\ProductIdResolver;
 
 class Checkout extends Controller
 {
@@ -56,8 +57,7 @@ class Checkout extends Controller
             return null;
         }
 
-        $apiBase = rtrim(Option::get(self::$MODULE_ID, 'YANDEX_KIT_API_URL', 'https://integration.yastore.yandex.net/'), '/');
-        $expressUrl = $apiBase . '/express';
+        $expressUrl = 'https://checkout.kit.yandex.ru/express';
 
         $request = Application::getInstance()->getContext()->getRequest();
         $host = $request->getHttpHost() ?: $request->getServer()->get('HTTP_HOST');
@@ -106,7 +106,7 @@ class Checkout extends Controller
             }
 
             $items[] = [
-                'id' => (string) $productId,
+                'id' => ProductIdResolver::getExternalId($productId),
                 'quantity' => $quantity,
                 'price' => $basePrice,
                 'final_price' => $finalPrice,

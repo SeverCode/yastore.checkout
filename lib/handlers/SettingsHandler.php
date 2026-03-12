@@ -34,6 +34,9 @@ class SettingsHandler extends BaseHandler
             // Проверяем складской учет
             $isStoreControl = $this->isStoreControlEnabled();
 
+            // Количественный учёт (default_quantity_trace) — ведение остатка по товару, запрет покупки при нуле
+            $quantityTraceEnabled = Option::get('catalog', 'default_quantity_trace', 'N') === 'Y';
+
             // Получаем список складов
             $warehouses = StoreTable::getList([
                 'filter' => ['ACTIVE' => 'Y'],
@@ -87,6 +90,7 @@ class SettingsHandler extends BaseHandler
 
             $this->sendResponse([
                 'store_control_enabled' => $isStoreControl,
+                'quantity_trace_enabled' => $quantityTraceEnabled,
                 'reservation_enabled' => $isReservationEnabled,
                 'warehouses_count' => count($warehousesList),
                 'warehouses' => $warehousesList,
