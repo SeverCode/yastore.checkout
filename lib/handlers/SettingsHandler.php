@@ -121,17 +121,43 @@ class SettingsHandler extends BaseHandler
 
     private function getModuleSettings()
     {
-        $jwtToken = Option::get('yastore.checkout', 'JWT_TOKEN', '');
-        
+        $m = $this->moduleId;
+        $jwtToken = Option::get($m, 'JWT_TOKEN', '');
+        $apiToken = trim((string) Option::get($m, 'YANDEX_KIT_API_TOKEN', ''));
+
         return [
-            'jwt_token_configured' => !empty($jwtToken),
-            'status_on_placed' => Option::get('yastore.checkout', 'STATUS_ON_PLACED', 'P'),
-            'status_on_cancel' => Option::get('yastore.checkout', 'STATUS_ON_CANCEL', 'C'),
-            'status_on_delivered' => Option::get('yastore.checkout', 'STATUS_ON_DELIVERED', 'F'),
-            'delivery_service_id' => (int)Option::get('yastore.checkout', 'YANDEX_KIT_DELIVERY_ID', 0),
-            'payment_system_id' => (int)Option::get('yastore.checkout', 'YANDEX_KIT_PAY_SYSTEM_ID', 0),
-            'use_general_stock_only' => Option::get('yastore.checkout', 'USE_GENERAL_STOCK_ONLY', 'N') === 'Y',
-            'send_order_emails' => Option::get('yastore.checkout', 'SEND_ORDER_EMAILS', 'N') === 'Y',
+            'jwt_token_configured' => $jwtToken !== '',
+            'yandex_kit_api_token_configured' => $apiToken !== '',
+            'yandex_kit_store_id' => trim((string) Option::get($m, 'YANDEX_KIT_STORE_ID', '')),
+            'yandex_kit_api_url' => Option::get($m, 'YANDEX_KIT_API_URL', 'https://integration.yastore.yandex.net/'),
+            'yastore_user_id' => (int) Option::get($m, 'YASTORE_USER_ID', 0),
+            'site_id' => (string) Option::get($m, 'SITE_ID', ''),
+            'yakit_product_id_field' => Option::get($m, 'YAKIT_PRODUCT_ID_FIELD', 'ID'),
+            'yakit_product_iblock_id' => (int) Option::get($m, 'YAKIT_PRODUCT_IBLOCK_ID', 0),
+            'yakit_product_id_property' => (string) Option::get($m, 'YAKIT_PRODUCT_ID_PROPERTY', ''),
+            'send_order_emails' => Option::get($m, 'SEND_ORDER_EMAILS', 'N') === 'Y',
+            'use_general_stock_only' => Option::get($m, 'USE_GENERAL_STOCK_ONLY', 'N') === 'Y',
+            'sell_without_stock_check' => Option::get($m, 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y',
+            'default_product_quantity' => max(1, (int) Option::get($m, 'DEFAULT_PRODUCT_QUANTITY', '1')),
+            'status_on_placed' => Option::get($m, 'STATUS_ON_PLACED', 'P'),
+            'status_on_cancel' => Option::get($m, 'STATUS_ON_CANCEL', 'C'),
+            'status_on_delivered' => Option::get($m, 'STATUS_ON_DELIVERED', 'F'),
+            'auto_cancel_on_status_change' => Option::get($m, 'AUTO_CANCEL_ON_STATUS_CHANGE', 'N') === 'Y',
+            'auto_cancel_status' => Option::get($m, 'AUTO_CANCEL_STATUS', 'C'),
+            'auto_complete_on_status_change' => Option::get($m, 'AUTO_COMPLETE_ON_STATUS_CHANGE', 'N') === 'Y',
+            'auto_complete_status' => Option::get($m, 'AUTO_COMPLETE_STATUS', 'F'),
+            'show_button' => Option::get($m, 'SHOW_BUTTON', 'N') === 'Y',
+            'yakit_basket_page_path' => (string) Option::get($m, 'YAKIT_BASKET_PAGE_PATH', '/personal/cart/'),
+            'button_anchor' => (string) Option::get($m, 'BUTTON_ANCHOR', '.basket-checkout-section-inner'),
+            'yakit_button_insert_after' => (string) Option::get($m, 'YAKIT_BUTTON_INSERT_AFTER', ''),
+            'yakit_button_css' => (string) Option::get($m, 'YAKIT_BUTTON_CSS', ''),
+            'use_sku' => Option::get($m, 'USE_SKU', 'N') === 'Y',
+            'sku_iblock_id' => (int) Option::get($m, 'SKU_IBLOCK_ID', 0),
+            'sku_properties' => (string) Option::get($m, 'SKU_PROPERTIES', ''),
+            'sku_color_property' => (string) Option::get($m, 'SKU_COLOR_PROPERTY', ''),
+            'sku_color_map' => (string) Option::get($m, 'SKU_COLOR_MAP', ''),
+            'delivery_service_id' => (int) Option::get($m, 'YANDEX_KIT_DELIVERY_ID', 0),
+            'payment_system_id' => (int) Option::get($m, 'YANDEX_KIT_PAY_SYSTEM_ID', 0),
         ];
     }
 
