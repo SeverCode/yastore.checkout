@@ -61,6 +61,7 @@ class OrdersHandler extends BaseHandler
             // Для старых версий/ретраев: если kit_order_id не передан, считаем kit_order_id = order_id
             $kitOrderId = !empty($requestData['kit_order_id']) ? $requestData['kit_order_id'] : $externalOrderId;
             $warehouseId = $requestData['warehouse_id'];
+            $internalStoreId = $this->resolveInternalStoreIdForOrder($warehouseId);
             $items = $requestData['items'];
             $customer = $requestData['customer'];
             $delivery = $requestData['delivery'];
@@ -141,7 +142,7 @@ class OrdersHandler extends BaseHandler
             $siteId = Context::getCurrent()->getSite();
             $order = Order::create($siteId, $userId);
             $order->setField('XML_ID', $externalOrderId);
-            $order->setField('STORE_ID', $warehouseId);
+            $order->setField('STORE_ID', $internalStoreId);
             
             // Получаем тип плательщика из контекста (по SITE_ID)
             $personTypeId = $this->getPersonTypeIdBySite($siteId);
@@ -197,6 +198,7 @@ class OrdersHandler extends BaseHandler
             $order->setBasket($basket);
             
             $isStoreControl = $this->isStoreControlEnabled();
+            $storeControlForShipment = $isStoreControl && !$this->useGeneralStockOnly();
             
             $deliveryId = Option::get('yastore.checkout', 'YANDEX_KIT_DELIVERY_ID', 0);
             if ($deliveryId) {
@@ -219,9 +221,9 @@ class OrdersHandler extends BaseHandler
                     'CURRENCY' => 'RUB', 
                 ]); 
                 
-                // Указываем склад только если складской учёт включен
-                if ($isStoreControl) {
-                    $shipment->setStoreId($warehouseId);
+                // Указываем склад только если складской учёт включен и не режим «только общий остаток»
+                if ($storeControlForShipment && $internalStoreId > 0) {
+                    $shipment->setStoreId($internalStoreId);
                 }
                 
                 $shipmentItemCollection = $shipment->getShipmentItemCollection(); 
@@ -230,10 +232,10 @@ class OrdersHandler extends BaseHandler
                     
                     // Если складской учёт включен - задаём склад через ShipmentItemStore
                     // Совместимость с Bitrix 18.5: метод может отсутствовать
-                    if ($isStoreControl && method_exists($shipmentItem, 'getShipmentItemStoreCollection')) {
+                    if ($storeControlForShipment && $internalStoreId > 0 && method_exists($shipmentItem, 'getShipmentItemStoreCollection')) {
                         $shipmentItemStoreCollection = $shipmentItem->getShipmentItemStoreCollection();
                         $storeItem = $shipmentItemStoreCollection->createItem($basketItem);
-                        $storeItem->setField('STORE_ID', (int)$warehouseId);
+                        $storeItem->setField('STORE_ID', (int)$internalStoreId);
                         $storeItem->setField('QUANTITY', (float)$basketItem->getQuantity());
                     }
                     
@@ -401,6 +403,26 @@ class OrdersHandler extends BaseHandler
             if (!$order) {
                 $this->sendError('Failed to load order', 500);
                 return;
+            }
+
+            // Тело запроса: order_number → свойство YANDEX_ORDER_NUM
+            $placedBody = [];
+            $rawPlacedInput = file_get_contents('php://input');
+            if ($rawPlacedInput !== '' && $rawPlacedInput !== false) {
+                try {
+                    $decodedPlaced = Json::decode($rawPlacedInput);
+                    $placedBody = is_array($decodedPlaced) ? $decodedPlaced : [];
+                } catch (\Exception $e) {
+                    $placedBody = [];
+                }
+            }
+            if (array_key_exists('order_number', $placedBody)) {
+                $orderNum = $placedBody['order_number'];
+                if (is_int($orderNum) || (is_string($orderNum) && $orderNum !== '' && ctype_digit($orderNum))) {
+                    $this->setOrderPropertyValue($order, 'YANDEX_ORDER_NUM', (string)(int)$orderNum);
+                } elseif (is_float($orderNum) && floor($orderNum) == $orderNum) {
+                    $this->setOrderPropertyValue($order, 'YANDEX_ORDER_NUM', (string)(int)$orderNum);
+                }
             }
 
             // Получаем метод оплаты: сначала из запроса, затем из свойств заказа
@@ -748,6 +770,7 @@ class OrdersHandler extends BaseHandler
                 $warehouseId = (int)$this->getOrderPropertyValue($order, 'STORE_ID');
             }
             $isStoreControl = $this->isStoreControlEnabled();
+            $storeControlForShipment = $isStoreControl && !$this->useGeneralStockOnly();
 
             // Отмечаем отгрузки как доставленные
             foreach ($shipmentCollection as $shipment) {
@@ -755,7 +778,7 @@ class OrdersHandler extends BaseHandler
                     continue;
                 }
 
-                if ($isStoreControl && $warehouseId > 0) {
+                if ($storeControlForShipment && $warehouseId > 0) {
                     $shipment->setStoreId($warehouseId);
                 }
 
@@ -796,7 +819,7 @@ class OrdersHandler extends BaseHandler
                         if ($shipmentItem) {
                             $shipmentItem->setQuantity($basketItem->getQuantity());
                             // При включённом складском учёте задаём склад для списания (как при создании заказа)
-                            if ($isStoreControl && $warehouseId > 0 && method_exists($shipmentItem, 'getShipmentItemStoreCollection')) {
+                            if ($storeControlForShipment && $warehouseId > 0 && method_exists($shipmentItem, 'getShipmentItemStoreCollection')) {
                                 $shipmentItemStoreCollection = $shipmentItem->getShipmentItemStoreCollection();
                                 $storeItem = $shipmentItemStoreCollection->createItem($basketItem);
                                 $storeItem->setField('STORE_ID', $warehouseId);
@@ -880,12 +903,113 @@ class OrdersHandler extends BaseHandler
 
 
     /**
+     * Внутренний ID склада для заказа: в режиме общего остатка в API склад «1» (виртуальный); в b_catalog_store запись с ID 1 может отсутствовать.
+     */
+    private function resolveInternalStoreIdForOrder($warehouseId)
+    {
+        $wid = (int) $warehouseId;
+        if ($this->useGeneralStockOnly()) {
+            if ($wid === 1) {
+                $row = StoreTable::getById(1)->fetch();
+
+                return $row ? 1 : 0;
+            }
+
+            return $wid;
+        }
+
+        return $wid;
+    }
+
+    /**
+     * Конфликты при режиме «только общий остаток»: остаток из ProductTable, в ответе виртуальный склад id=1.
+     */
+    private function checkInventoryConflictsUsingGeneralStockOnly($items)
+    {
+        $conflicts = [];
+        $quantityTraceEnabled = Option::get('catalog', 'default_quantity_trace', 'N') === 'Y';
+        $gwId = $this->getGeneralWarehouseForApi()['id'];
+
+        foreach ($items as $item) {
+            $productId = ProductIdResolver::resolveToInternalId($item['id']);
+            if ($productId === null) {
+                continue;
+            }
+            $requestedQuantity = isset($item['quantity']) && (string) $item['quantity'] !== '' ? intval($item['quantity']) : 1;
+            if ($requestedQuantity < 1) {
+                $requestedQuantity = 1;
+            }
+            $requestedRegularPrice = floatval($item['price']);
+            $requestedFinalPrice = floatval($item['final_price']);
+
+            $product = ProductTable::getList([
+                'filter' => ['ID' => $productId],
+                'select' => ['ID', 'QUANTITY'],
+            ])->fetch();
+
+            $availableQuantity = $product ? (float) $product['QUANTITY'] : 0;
+
+            Loader::includeModule('catalog');
+            $optimalPrice = \CCatalogProduct::GetOptimalPrice(
+                $productId,
+                1,
+                [],
+                'N',
+                [],
+                Context::getCurrent()->getSite()
+            );
+
+            $currentRegularPrice = 0;
+            $currentFinalPrice = 0;
+
+            if ($optimalPrice && isset($optimalPrice['RESULT_PRICE'])) {
+                $currentRegularPrice = floatval($optimalPrice['RESULT_PRICE']['BASE_PRICE']);
+                $currentFinalPrice = floatval($optimalPrice['RESULT_PRICE']['DISCOUNT_PRICE']);
+            }
+
+            $hasConflict = false;
+            $sellWithoutStockCheck = Option::get('yastore.checkout', 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y';
+            if ($quantityTraceEnabled && !$sellWithoutStockCheck && $availableQuantity < $requestedQuantity) {
+                $hasConflict = true;
+            }
+
+            if (ceil($currentRegularPrice) !== ceil($requestedRegularPrice)) {
+                $hasConflict = true;
+            }
+
+            if (ceil($currentFinalPrice) !== ceil($requestedFinalPrice)) {
+                $hasConflict = true;
+            }
+
+            if ($hasConflict) {
+                $conflicts[] = [
+                    'id' => ProductIdResolver::getExternalId($productId),
+                    'warehouses' => [
+                        [
+                            'id' => $gwId,
+                            'available_quantity' => $availableQuantity,
+                            'regular_price' => $currentRegularPrice,
+                            'final_price' => $currentFinalPrice,
+                        ],
+                    ],
+                ];
+            }
+        }
+
+        return $conflicts ? ['items' => $conflicts] : [];
+    }
+
+    /**
      * Проверить конфликты наличия и цен товаров.
      * Количественный учёт (quantity_trace) — проверять ли наличие по количеству.
      * Складской учёт (store_control) — откуда брать остаток: общий (ProductTable) или по складу (StoreProductTable).
      */
     private function checkInventoryConflicts($items, $warehouseId)
     {
+        if ($this->useGeneralStockOnly()) {
+            return $this->checkInventoryConflictsUsingGeneralStockOnly($items);
+        }
+
         $conflicts = [];
         $quantityTraceEnabled = Option::get('catalog', 'default_quantity_trace', 'N') === 'Y';
         $isStoreControl = Configuration::useStoreControl();
@@ -1264,6 +1388,37 @@ class OrdersHandler extends BaseHandler
         }
         
         return null;
+    }
+
+    /**
+     * Установить значение свойства заказа по коду (без сохранения заказа).
+     */
+    private function setOrderPropertyValue($order, $code, $value)
+    {
+        try {
+            $propertyCollection = $order->getPropertyCollection();
+            if (method_exists($propertyCollection, 'getItemByOrderPropertyCode')) {
+                $propItem = $propertyCollection->getItemByOrderPropertyCode($code);
+                if ($propItem) {
+                    $propItem->setValue($value);
+                }
+            } else {
+                $properties = $propertyCollection->getArray();
+                if (isset($properties['properties'])) {
+                    foreach ($properties['properties'] as $property) {
+                        if (isset($property['CODE']) && $property['CODE'] === $code) {
+                            $propItem = $propertyCollection->getItemByOrderPropertyId($property['ID']);
+                            if ($propItem) {
+                                $propItem->setValue($value);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // игнорируем
+        }
     }
 
     /**

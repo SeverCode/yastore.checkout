@@ -335,6 +335,8 @@
           Если у заказа нет платежа, создается платеж и отмечается как оплаченный.
           
           Если передан параметр `payment_method=on_delivery`, заказ не будет помечен как оплаченный (paid: false).
+          
+          В теле запроса (JSON) можно передать `order_number` (целое число) — оно сохраняется в свойство заказа с кодом `YANDEX_ORDER_NUM`.
         operationId: markOrderPlaced
         security:
           - bearerAuth: []
@@ -353,6 +355,18 @@
             schema:
               type: string
             example: "on_delivery"
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_number:
+                    type: integer
+                    description: Номер заказа Яндекса; записывается в свойство заказа YANDEX_ORDER_NUM
+              example:
+                order_number: 10042
         responses:
           '200':
             description: Заказ успешно отмечен как оплаченный

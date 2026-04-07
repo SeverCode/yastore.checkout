@@ -37,19 +37,29 @@ class SettingsHandler extends BaseHandler
             // Количественный учёт (default_quantity_trace) — ведение остатка по товару, запрет покупки при нуле
             $quantityTraceEnabled = Option::get('catalog', 'default_quantity_trace', 'N') === 'Y';
 
-            // Получаем список складов
-            $warehouses = StoreTable::getList([
-                'filter' => ['ACTIVE' => 'Y'],
-                'select' => ['ID', 'TITLE', 'XML_ID'],
-                'order' => ['SORT' => 'ASC', 'ID' => 'ASC']
-            ]);
-
-            $warehousesList = [];
-            while ($warehouse = $warehouses->fetch()) {
-                $warehousesList[] = [
-                    'id' => $warehouse['XML_ID'] ?: (string)$warehouse['ID'],
-                    'name' => $warehouse['TITLE'] ?: ''
+            if ($this->useGeneralStockOnly()) {
+                $gw = $this->getGeneralWarehouseForApi();
+                $warehousesList = [
+                    [
+                        'id' => $gw['id'],
+                        'name' => $gw['name'],
+                    ],
                 ];
+            } else {
+                // Получаем список складов
+                $warehouses = StoreTable::getList([
+                    'filter' => ['ACTIVE' => 'Y'],
+                    'select' => ['ID', 'TITLE', 'XML_ID'],
+                    'order' => ['SORT' => 'ASC', 'ID' => 'ASC']
+                ]);
+
+                $warehousesList = [];
+                while ($warehouse = $warehouses->fetch()) {
+                    $warehousesList[] = [
+                        'id' => (string)($warehouse['XML_ID'] ?: $warehouse['ID']),
+                        'name' => $warehouse['TITLE'] ?: ''
+                    ];
+                }
             }
 
             // Проверяем резервирование
@@ -120,6 +130,8 @@ class SettingsHandler extends BaseHandler
             'status_on_delivered' => Option::get('yastore.checkout', 'STATUS_ON_DELIVERED', 'F'),
             'delivery_service_id' => (int)Option::get('yastore.checkout', 'YANDEX_KIT_DELIVERY_ID', 0),
             'payment_system_id' => (int)Option::get('yastore.checkout', 'YANDEX_KIT_PAY_SYSTEM_ID', 0),
+            'use_general_stock_only' => Option::get('yastore.checkout', 'USE_GENERAL_STOCK_ONLY', 'N') === 'Y',
+            'send_order_emails' => Option::get('yastore.checkout', 'SEND_ORDER_EMAILS', 'N') === 'Y',
         ];
     }
 

@@ -18,21 +18,27 @@ if (\Bitrix\Main\Loader::includeModule('sale')) {
     }
 }
 
-// Получаем список инфоблоков торговых предложений
+// Получаем список инфоблоков каталога: все каталоги (с ТП и без)
 $arSkuIBlocks = array();
 $arProductIBlocks = array(); // инфоблоки товаров и ТП для выбора "по какому искать"
 if (\Bitrix\Main\Loader::includeModule('catalog') && \Bitrix\Main\Loader::includeModule('iblock')) {
     $catalogIterator = \Bitrix\Catalog\CatalogIblockTable::getList(array(
-        'select' => array('IBLOCK_ID', 'PRODUCT_IBLOCK_ID'),
-        'filter' => array('>PRODUCT_IBLOCK_ID' => 0)
+        'select' => array('IBLOCK_ID', 'PRODUCT_IBLOCK_ID')
     ));
     while ($catalog = $catalogIterator->fetch()) {
         $iblockId = (int)$catalog['IBLOCK_ID'];
         $productIblockId = (int)$catalog['PRODUCT_IBLOCK_ID'];
         $iblock = \CIBlock::GetByID($iblockId)->Fetch();
         if ($iblock) {
-            $arSkuIBlocks[$iblockId] = '[' . $iblock['IBLOCK_TYPE_ID'] . '] ' . $iblock['NAME'];
-            $arProductIBlocks[$iblockId] = $arSkuIBlocks[$iblockId];
+            $label = '[' . $iblock['IBLOCK_TYPE_ID'] . '] ' . $iblock['NAME'];
+            if ($productIblockId > 0) {
+                // Каталог с ТП: инфоблок — ТП, отдельно инфоблок товаров
+                $arSkuIBlocks[$iblockId] = $label;
+                $arProductIBlocks[$iblockId] = $label;
+            } else {
+                // Каталог без ТП: один инфоблок — и каталог, и товары
+                $arProductIBlocks[$iblockId] = $label;
+            }
         }
         if ($productIblockId > 0 && !isset($arProductIBlocks[$productIblockId])) {
             $pIblock = \CIBlock::GetByID($productIblockId)->Fetch();
@@ -112,6 +118,8 @@ $aTabs = array(
             array('YAKIT_PRODUCT_IBLOCK_ID', 'Инфоблок товаров', '', array('select', $arProductIBlocks)),
             array('YAKIT_PRODUCT_ID_PROPERTY', 'Код свойства (если поле = «Свойство инфоблока»)', '', array('select', $arProductIdProperties)),
             array('__group_sell', 'Продажи'),
+            array('SEND_ORDER_EMAILS', 'Отправлять письма о заказах', 'N', array('checkbox')),
+            array('USE_GENERAL_STOCK_ONLY', 'Использовать общий остаток (игнорировать склады)', 'N', array('checkbox')),
             array('SELL_WITHOUT_STOCK_CHECK', 'Продавать все активные товары (не проверять наличие остатков)', 'N', array('checkbox')),
             array('DEFAULT_PRODUCT_QUANTITY', 'Количество товара по умолчанию (шт)', '1', array('text', 5)),
         )
@@ -131,8 +139,8 @@ $aTabs = array(
         'OPTIONS' => array(
             array('AUTO_CANCEL_ON_STATUS_CHANGE', 'Отменять заказ в Яндекс KIT при смене статуса', 'N', array('checkbox')),
             array('AUTO_CANCEL_STATUS', 'Статус для автоматической отмены', 'C', array('select', $arStatuses)),
-            array('AUTO_COMPLETE_ON_STATUS_CHANGE', 'Завершать заказ в Яндекс KIT при смене статуса', 'N', array('checkbox')),
-            array('AUTO_COMPLETE_STATUS', 'Статус для автоматического завершения', 'F', array('select', $arStatuses)),
+            array('AUTO_COMPLETE_ON_STATUS_CHANGE', 'Завершать доставку в Яндекс KIT при смене статуса', 'N', array('checkbox')),
+            array('AUTO_COMPLETE_STATUS', 'Статус для автоматического завершения доставки', 'F', array('select', $arStatuses)),
         )
     ),
     array(
@@ -140,7 +148,7 @@ $aTabs = array(
         'TAB' => 'Кнопка «Купить в 1 клик»',
         'OPTIONS' => array(
             array('SHOW_BUTTON', 'Показывать кнопку на странице корзины', 'N', array('checkbox')),
-            array('BUTTON_ANCHOR', 'CSS-селектор контейнера для кнопки', '.basket-checkout-section-inner', array('text', 100)),
+            array('YAKIT_BASKET_PAGE_PATH', 'Путь к странице корзины (фрагмент URL, без домена)', '/personal/cart/', array('text', 80)),            array('BUTTON_ANCHOR', 'CSS-селектор контейнера для кнопки', '.basket-checkout-section-inner', array('text', 100)),
             array('YAKIT_BUTTON_INSERT_AFTER', 'CSS-селектор элемента, после которого вставлять кнопку (необязательно)', '', array('text', 100)),
             array('YAKIT_BUTTON_CSS', 'CSS-стили кнопки', getYastoreCheckoutButtonCssDefault(), array('textarea', 18, 80)),
         )
