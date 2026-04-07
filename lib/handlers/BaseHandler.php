@@ -4,6 +4,7 @@ namespace Yastore\Checkout\Handlers;
 use Bitrix\Main\Application;
 use Bitrix\Main\Web\Json;
 use Bitrix\Main\Loader;
+use Bitrix\Main\Config\Option;
 use Bitrix\Catalog\StoreTable;
 use Bitrix\Catalog\StoreProductTable;
 
@@ -62,6 +63,23 @@ abstract class BaseHandler
     }
 
     /**
+     * Режим «только общий остаток»: в API тот же виртуальный склад id=1, без учёта остатков по складам.
+     */
+    protected function useGeneralStockOnly()
+    {
+        return Option::get($this->moduleId, 'USE_GENERAL_STOCK_ONLY', 'N') === 'Y';
+    }
+
+    /**
+     * Склад для ответов API в режиме общего остатка — тот же, что и виртуальный (id 1).
+     * @return array{id: string, name: string}
+     */
+    protected function getGeneralWarehouseForApi()
+    {
+        return $this->getVirtualWarehouse();
+    }
+
+    /**
      * Возвращает данные виртуального склада
      * @return array
      */
@@ -69,7 +87,7 @@ abstract class BaseHandler
     {
         return [
             'id' => '1',
-            'name' => 'Виртуальный склад'
+            'name' => 'Виртуальный склад',
         ];
     }
 

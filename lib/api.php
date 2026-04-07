@@ -98,6 +98,7 @@ class Api
         if (function_exists('getallheaders')) {
             $headers = array_change_key_case(getallheaders(), CASE_LOWER);
             $auth = $headers['authorization'] ?? '';
+            $auth = trim($auth, " !@#$%^&*()_+-=[]{}|\\:;\"'<>,.?/~`");
             if ($auth !== '') {
                 return $auth;
             }

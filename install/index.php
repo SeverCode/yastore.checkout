@@ -6,8 +6,8 @@ class yastore_checkout extends CModule
 {
     var $MODULE_ID = "yastore.checkout";
     var $MODULE_NAME = "Экспресс-чекаут Яндекс KIT";
-    var $MODULE_VERSION = "0.0.23";
-    var $MODULE_VERSION_DATE = "2026-03-12";
+    var $MODULE_VERSION = "0.0.25";
+    var $MODULE_VERSION_DATE = "2026-04-07";
     var $MODULE_DESCRIPTION = "Экспресс-чекаут Яндекс KIT";
     var $PARTNER_NAME = "Яндекс";
     var $PARTNER_URI = "https://kit.yandex.ru";
@@ -30,6 +30,7 @@ class yastore_checkout extends CModule
         ModuleManager::registerModule($this->MODULE_ID);
 
         RegisterModuleDependences("main", "OnBeforeProlog", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "appendYandexCheckoutJs");
+        $this->registerSaleMailGateHandlers();
         RegisterModuleDependences("sale", "OnSaleOrderSaved", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleOrderSaved");
         RegisterModuleDependences("sale", "OnSaleStatusOrderChange", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleStatusOrderChange");
 
@@ -77,6 +78,36 @@ class yastore_checkout extends CModule
     {
         // Обновляем значение YANDEX_KIT_PAY_SYSTEM_ID при обновлении модуля
         $this->updatePaymentSystemId();
+        $this->registerSaleMailGateHandlers();
+    }
+
+    /**
+     * Обработчик отключения писем Sale — на событиях, из которых вызывается Notify (sort=1).
+     */
+    private function registerSaleMailGateHandlers()
+    {
+        foreach ($this->getSaleMailGateEventNames() as $eventName) {
+            UnRegisterModuleDependences("sale", $eventName, $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleOrderSavedMailGate");
+            RegisterModuleDependences("sale", $eventName, $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleOrderSavedMailGate", 1);
+        }
+    }
+
+    private function unregisterSaleMailGateHandlers()
+    {
+        foreach ($this->getSaleMailGateEventNames() as $eventName) {
+            UnRegisterModuleDependences("sale", $eventName, $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleOrderSavedMailGate");
+        }
+    }
+
+    private function getSaleMailGateEventNames()
+    {
+        return [
+            "OnSaleOrderSaved",
+            "OnSaleOrderCanceled",
+            "OnSaleOrderPaid",
+            "OnSaleStatusOrderChange",
+            "OnShipmentAllowDelivery",
+        ];
     }
     
     private function updatePaymentSystemId()
@@ -122,6 +153,7 @@ class yastore_checkout extends CModule
         $this->removeApiFile();
         
         UnRegisterModuleDependences("main", "OnBeforeProlog", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "appendYandexCheckoutJs");
+        $this->unregisterSaleMailGateHandlers();
         UnRegisterModuleDependences("sale", "OnSaleOrderSaved", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleOrderSaved");
         UnRegisterModuleDependences("sale", "OnSaleStatusOrderChange", $this->MODULE_ID, "\\Yastore\\Checkout\\Handlers", "onSaleStatusOrderChange");
         ModuleManager::unRegisterModule($this->MODULE_ID);
@@ -402,9 +434,15 @@ class yastore_checkout extends CModule
                 ],
                 [
                     'CODE' => 'YANDEX_ORDER_ID',
-                    'NAME' => 'Внешний ID Заказа (Yandex ID)',
+                    'NAME' => 'Внешний ID Заказа (Яндекс ID)',
                     'TYPE' => 'STRING',
                     'SORT' => 110,
+                ],
+                [
+                    'CODE' => 'YANDEX_ORDER_NUM',
+                    'NAME' => 'Заказ № (Яндекс)',
+                    'TYPE' => 'STRING',
+                    'SORT' => 90,
                 ],
                 // Данные доставки
                 [

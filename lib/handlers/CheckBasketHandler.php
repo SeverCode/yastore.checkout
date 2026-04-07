@@ -178,17 +178,47 @@ class CheckBasketHandler extends BaseHandler
         $sellWithoutStockCheck = Option::get('yastore.checkout', 'SELL_WITHOUT_STOCK_CHECK', 'N') === 'Y';
         if ($sellWithoutStockCheck) {
             $availableQty = max(1, (int) Option::get('yastore.checkout', 'DEFAULT_PRODUCT_QUANTITY', '1'));
-            $firstWarehouse = StoreTable::getList([
-                'filter' => ['ACTIVE' => 'Y'],
-                'select' => ['ID'],
-                'order' => ['SORT' => 'ASC', 'ID' => 'ASC'],
-                'limit' => 1
-            ])->fetch();
-            if ($firstWarehouse) {
-                return [['id' => (string) $firstWarehouse['ID'], 'available_quantity' => $availableQty]];
+            if ($this->useGeneralStockOnly()) {
+                return [[
+                    'id' => $this->getGeneralWarehouseForApi()['id'],
+                    'available_quantity' => $availableQty,
+                ]];
             }
-            $virtualWarehouse = $this->getVirtualWarehouse();
-            return [['id' => $virtualWarehouse['id'], 'available_quantity' => $availableQty]];
+            $warehouseIdForResponse = null;
+            if ($warehouseId !== null && $warehouseId !== '') {
+                $requestedStore = StoreTable::getList([
+                    'filter' => ['ID' => $warehouseId, 'ACTIVE' => 'Y'],
+                    'select' => ['ID'],
+                    'limit' => 1
+                ])->fetch();
+                if ($requestedStore) {
+                    $warehouseIdForResponse = (string)$requestedStore['ID'];
+                }
+            }
+            if ($warehouseIdForResponse === null) {
+                $firstWarehouse = StoreTable::getList([
+                    'filter' => ['ACTIVE' => 'Y'],
+                    'select' => ['ID'],
+                    'order' => ['SORT' => 'ASC', 'ID' => 'ASC'],
+                    'limit' => 1
+                ])->fetch();
+                $warehouseIdForResponse = $firstWarehouse ? (string)$firstWarehouse['ID'] : $this->getVirtualWarehouse()['id'];
+            }
+            return [['id' => $warehouseIdForResponse, 'available_quantity' => $availableQty]];
+        }
+
+        // Только общий остаток из каталога, в API — виртуальный склад id=1
+        if ($this->useGeneralStockOnly()) {
+            $product = ProductTable::getList([
+                'filter' => ['ID' => $productId],
+                'select' => ['ID', 'QUANTITY', 'QUANTITY_RESERVED'],
+            ])->fetch();
+            $availableQuantity = $product ? (float) $product['QUANTITY'] : 0;
+
+            return [[
+                'id' => $this->getGeneralWarehouseForApi()['id'],
+                'available_quantity' => (int) $availableQuantity,
+            ]];
         }
 
         // Получаем общий остаток товара
@@ -229,15 +259,11 @@ class CheckBasketHandler extends BaseHandler
             while ($row = $storeProducts->fetch()) {
                 $store = \Bitrix\Catalog\StoreTable::getById($row['STORE_ID'])->fetch();
                 if ($store && $store['ACTIVE'] === 'Y') {
-                    $byStore[(string)$store['ID']] = (float)$row['AMOUNT'];
+                    $byStore[] = ['id' => (string)$store['ID'], 'available_quantity' => (int)$row['AMOUNT']];
                 }
             }
             if (!empty($byStore)) {
-                $out = [];
-                foreach ($byStore as $sid => $amount) {
-                    $out[] = ['id' => $sid, 'available_quantity' => $amount];
-                }
-                return $out;
+                return $byStore;
             }
             // Нет остатков по складам — один склад с общим остатком (ProductTable.QUANTITY)
             $firstWarehouse = StoreTable::getList([

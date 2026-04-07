@@ -2,7 +2,9 @@
 namespace Yastore\Checkout;
 
 use Bitrix\Main\Config\Option;
+use Bitrix\Main\Loader;
 use Bitrix\Main\Page\Asset;
+use Bitrix\Sale\Notify;
 use Bitrix\Sale\Order;
 
 
@@ -11,13 +13,29 @@ class Handlers
     static $MODULE_ID = "yastore.checkout";
 
     /**
+     * Ранний обработчик OnSaleOrderSaved (sort=1): отключает почтовые уведомления Sale,
+     * если в настройках модуля не включено «Отправлять письма о заказах».
+     */
+    public static function onSaleOrderSavedMailGate($event)
+    {
+        if (Option::get(self::$MODULE_ID, 'SEND_ORDER_EMAILS', 'N') !== 'Y') {
+            if (Loader::includeModule('sale')) {
+                Notify::setNotifyDisable(true);
+            }
+        }
+    }
+
+    /**
      * Подключение JS/CSS кнопки «Купить в 1 клик» на странице корзины.
      */
     public static function appendYandexCheckoutJs()
     {
         $request = \Bitrix\Main\Context::getCurrent()->getRequest();
         $requestPage = $request->getRequestedPage();
-        $basketPath = Option::get('sale', 'PATH_TO_BASKET', 'personal/cart/');
+        $basketPath = trim((string) Option::get(self::$MODULE_ID, 'YAKIT_BASKET_PAGE_PATH', '/personal/cart/'));
+        if ($basketPath === '') {
+            $basketPath = '/personal/cart/';
+        }
         $basketPathNorm = trim(trim($basketPath), '/');
         $showButton = Option::get(self::$MODULE_ID, 'SHOW_BUTTON', 'N');
 
@@ -551,8 +569,10 @@ class Handlers
     }
 
     /**
-     * Получение внешнего ID заказа из свойств заказа
-     * Приоритет: YANDEX_ORDER_ID (kit_order_id) > EXTERNAL_ORDER_ID > XML_ID
+     * Получение внешнего ID заказа из свойств заказа.
+     * Возвращает ID только для заказов, созданных через KIT (есть YANDEX_ORDER_ID или EXTERNAL_ORDER_ID).
+     * Обычные заказы Bitrix (только XML_ID вида bx_XXXX) намеренно игнорируются.
+     * Приоритет: YANDEX_ORDER_ID (kit_order_id) > EXTERNAL_ORDER_ID
      * 
      * @param Order $order Объект заказа
      * @return string|null Внешний ID заказа или null
@@ -584,11 +604,8 @@ class Handlers
                 }
             }
             
-            // Если не нашли в свойствах, пробуем получить из XML_ID
-            $xmlId = $order->getField('XML_ID');
-            if (!empty($xmlId)) {
-                return $xmlId;
-            }
+            // XML_ID намеренно не используется: у обычных заказов Bitrix там всегда bx_XXXX,
+            // что приводило бы к отправке запросов в KIT для не-KIT заказов.
             
         } catch (\Exception $e) {
             \Bitrix\Main\Application::getInstance()->getExceptionHandler()->writeToLog($e);
