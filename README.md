@@ -2,7 +2,7 @@
 
 Модуль внешнего чекаута Яндекс KIT для Bitrix.
 
-**Версия модуля:** см. `install/index.php` (`MODULE_VERSION` / `MODULE_VERSION_DATE`). На момент последнего обновления README: **0.0.25** (2026-03-30).
+**Версия модуля:** см. `install/index.php` (`MODULE_VERSION` / `MODULE_VERSION_DATE`). На момент последнего обновления README: **0.0.25** (2026-04-07).
 
 ## Установка
 
